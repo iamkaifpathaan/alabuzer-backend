@@ -24,7 +24,17 @@ const productSchema = new mongoose.Schema({
 
   category: {
     type: String,
-    required: true
+    required: true,
+    enum: [
+    "Attar Roll On",
+    "Travelling Collection",
+    "Body Mist",
+    "Perfume 75ml",
+    "Oudh Collection",
+    "Bakhoor",
+    "Air Freshener",
+    "Combo Packs"
+    ]
   },
 
   subCategory: {
