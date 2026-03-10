@@ -47,6 +47,36 @@ app.post("/api/products", async (req, res) => {
   }
 });
 
+// ================= BULK PRODUCT UPLOAD =================
+
+app.post("/api/products/bulk", async (req, res) => {
+  try {
+
+    const products = req.body.products;
+
+    if (!products || !products.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No products provided"
+      });
+    }
+
+    await Product.insertMany(products);
+
+    res.json({
+      success: true,
+      message: "Bulk upload successful"
+    });
+
+  } catch (err) {
+    console.error("BULK ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Bulk upload failed"
+    });
+  }
+});
+
 // Get All Products
 app.get("/api/products", async (req, res) => {
   try {
