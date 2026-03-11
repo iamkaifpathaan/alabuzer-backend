@@ -2,21 +2,23 @@ const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const { verifyToken, verifyAdmin } = require("../middleware/auth");
 
 /* =========================
    🛒 CREATE ORDER
 ========================= */
 
-router.post("/", async (req, res) => {
+router.post("/", verifyToken, async (req, res) => {
   try {
     const {
-      userId,
-      items,
-      shippingAddress,
-      paymentMethod
-    } = req.body;
+  items,
+  shippingAddress,
+  paymentMethod
+} = req.body;
 
-    if (!userId || !items || !items.length) {
+const userId = req.user.id;   // 🔐 TAKE FROM TOKEN
+
+    if (!items || !items.length) {
       return res.status(400).json({
         success: false,
         message: "Invalid order data"
@@ -93,7 +95,10 @@ for (const item of items) {
 
 const mongoose = require("mongoose");
 
-router.get("/user/:userId", async (req, res) => {
+router.get("/user/:userId", verifyToken, async (req, res) => {
+  if (req.user.id !== req.params.userId && req.user.role !== "admin") {
+  return res.status(403).json({ success: false, message: "Unauthorized" });
+  }
   try {
     const { userId } = req.params;
 
@@ -126,7 +131,7 @@ router.get("/user/:userId", async (req, res) => {
    🔄 UPDATE ORDER STATUS
 ========================= */
 
-router.put("/status/:id", async (req, res) => {
+router.put("/status/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -166,13 +171,11 @@ router.put("/status/:id", async (req, res) => {
   }
 });
 
-module.exports = router;
-
 /* =========================
    📦 GET ALL ORDERS (ADMIN)
 ========================= */
 
-router.get("/all", async (req, res) => {
+router.get("/all", verifyToken, verifyAdmin, async (req, res) => {
   try {
 
     const orders = await Order.find()
@@ -194,3 +197,5 @@ router.get("/all", async (req, res) => {
 
   }
 });
+
+module.exports = router;

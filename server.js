@@ -1,18 +1,31 @@
 require("dotenv").config();
-
+const crypto = require("crypto");
+const { verifyToken, verifyAdmin } = require("./middleware/auth");
 const Razorpay = require("razorpay");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-
+const Order = require("./models/Order");
 const Product = require("./models/Product");
 const User = require("./models/User");
 const orderRoutes = require("./routes/orderRoutes");
 
 const app = express();
+const rateLimit = require("express-rate-limit");
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 100
+});
+
+app.use(limiter);
 
 // ================= MIDDLEWARE =================
-app.use(cors());
+app.use(cors({
+  origin: "*"
+}));
+const helmet = require("helmet");
+app.use(helmet());
 app.use(express.json());
 
 // ================= DB CONNECT =================
@@ -37,7 +50,7 @@ app.get("/", (req, res) => {
 // ================= PRODUCTS =================
 
 // Add Product
-app.post("/api/products", async (req, res) => {
+app.post("/api/products", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const product = new Product(req.body);
     await product.save();
@@ -49,7 +62,7 @@ app.post("/api/products", async (req, res) => {
 
 // ================= BULK PRODUCT UPLOAD =================
 
-app.post("/api/products/bulk", async (req, res) => {
+app.post("/api/products/bulk", verifyToken, verifyAdmin, async (req, res) => {
   try {
 
     const products = req.body.products;
@@ -106,7 +119,7 @@ app.get("/api/products", async (req, res) => {
 });
 
 // Update Product
-app.put("/api/products/:id", async (req, res) => {
+app.put("/api/products/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(
       req.params.id,
@@ -120,7 +133,7 @@ app.put("/api/products/:id", async (req, res) => {
 });
 
 // Delete Product
-app.delete("/api/products/:id", async (req, res) => {
+app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: "Product deleted" });
@@ -132,6 +145,8 @@ app.delete("/api/products/:id", async (req, res) => {
 // ================= AUTH =================
 
 // Signup
+const bcrypt = require("bcryptjs");
+
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password, phone } = req.body;
@@ -141,26 +156,59 @@ app.post("/api/auth/signup", async (req, res) => {
       return res.json({ success: false, message: "Email already exists" });
     }
 
-    const user = new User({ name, email, password, phone });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      phone
+    });
+
     await user.save();
 
-    res.json({ success: true, message: "Signup successful", user });
+    res.json({ success: true, message: "Signup successful" });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // Login
+const jwt = require("jsonwebtoken");
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.json({ success: false, message: "Invalid credentials" });
     }
 
-    res.json({ success: true, message: "Login successful", user });
+    const bcrypt = require("bcryptjs");
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return res.json({ success: false, message: "Invalid credentials" });
+    }
+
+    // 🔐 TOKEN GENERATE
+    const token = jwt.sign(
+      {
+        id: user._id,
+        role: user.role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user
+    });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -202,6 +250,62 @@ app.post("/api/payment/create-order", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Payment order failed"
+    });
+  }
+});
+
+// ================================
+// 🔐 VERIFY RAZORPAY PAYMENT
+// ================================
+
+app.post("/api/payment/verify", verifyToken, async (req, res) => {
+  try {
+
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      items,
+      shippingAddress
+    } = req.body;
+
+    const userId = req.user.id;
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment verification failed"
+      });
+    }
+
+    // ✅ PAYMENT VERIFIED — NOW SAVE ORDER
+
+    const order = new Order({
+      userId,
+      items,
+      shippingAddress,
+      paymentMethod: "Razorpay"
+    });
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: "Payment verified and order saved"
+    });
+
+  } catch (err) {
+    console.error("VERIFY ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: "Verification failed"
     });
   }
 });
