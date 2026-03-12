@@ -310,6 +310,33 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
   }
 });
 
+const transporter = require("./utils/mailer");
+
+app.get("/test-email", async (req,res)=>{
+
+try{
+
+await transporter.sendMail({
+
+from:process.env.EMAIL_USER,
+to:process.env.EMAIL_USER,
+subject:"Test Email",
+
+text:"Email system working."
+
+});
+
+res.send("Email sent successfully");
+
+}catch(err){
+
+console.log(err);
+res.send("Email failed");
+
+}
+
+});
+
 // ================= SERVER =================
 app.listen(5000, () => {
   console.log("🔥 Server running on port 5000");

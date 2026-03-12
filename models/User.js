@@ -9,6 +9,9 @@ const userSchema = new mongoose.Schema({
   password: String,
   phone: String,
 
+  resetOtp: Number,
+  resetOtpExpire: Date,
+
   role: {
   type: String,
   default: "user" // user or admin
