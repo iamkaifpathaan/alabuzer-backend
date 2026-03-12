@@ -214,6 +214,116 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// ================= SEND RESET OTP =================
+
+app.post("/api/auth/send-otp", async (req,res)=>{
+
+try{
+
+const {email} = req.body;
+
+const user = await User.findOne({email});
+
+if(!user){
+return res.json({
+success:false,
+message:"Email not registered"
+});
+}
+
+const otp = Math.floor(100000 + Math.random()*900000);
+
+user.resetOtp = otp;
+user.resetOtpExpire = Date.now() + 10*60*1000;
+
+await user.save();
+
+await transporter.sendMail({
+
+from:process.env.EMAIL_USER,
+to:email,
+subject:"Password Reset OTP",
+
+text:`Your OTP is ${otp}. It expires in 10 minutes.`
+
+});
+
+res.json({
+success:true,
+message:"OTP sent to email"
+});
+
+}catch(err){
+
+console.log(err);
+
+res.status(500).json({
+success:false,
+message:"OTP send failed"
+});
+
+}
+
+});
+
+// ================= RESET PASSWORD =================
+
+app.post("/api/auth/reset-password", async (req,res)=>{
+
+try{
+
+const {email,otp,newPassword} = req.body;
+
+const user = await User.findOne({email});
+
+if(!user){
+return res.json({
+success:false,
+message:"User not found"
+});
+}
+
+if(user.resetOtp != otp){
+return res.json({
+success:false,
+message:"Invalid OTP"
+});
+}
+
+if(Date.now() > user.resetOtpExpire){
+return res.json({
+success:false,
+message:"OTP expired"
+});
+}
+
+const hashed = await bcrypt.hash(newPassword,10);
+
+user.password = hashed;
+
+user.resetOtp = null;
+user.resetOtpExpire = null;
+
+await user.save();
+
+res.json({
+success:true,
+message:"Password reset successful"
+});
+
+}catch(err){
+
+console.log(err);
+
+res.status(500).json({
+success:false,
+message:"Reset failed"
+});
+
+}
+
+});
+
 // ================================
 // 💳 CREATE RAZORPAY ORDER
 // ================================

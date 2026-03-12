@@ -2,8 +2,10 @@ const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
 const Product = require("../models/Product");
-const { verifyToken, verifyAdmin } = require("../middleware/auth");
+const transporter = require("../utils/mailer");
+const User = require("../models/User");
 
+const { verifyToken, verifyAdmin } = require("../middleware/auth");
 /* =========================
    🛒 CREATE ORDER
 ========================= */
@@ -57,6 +59,42 @@ for (const item of items) {
     });
 
     await order.save();
+
+/* =========================
+   📧 ORDER PLACED EMAIL
+========================= */
+
+try{
+
+const user = await User.findById(userId);
+
+if(user?.email){
+
+await transporter.sendMail({
+
+from:process.env.EMAIL_USER,
+to:user.email,
+subject:"Order Placed - AL ABUZER PERFUMES",
+
+html:`
+
+<h2>Thank you for your order</h2>
+
+<p>Your order has been placed successfully.</p>
+
+<p><strong>Order ID:</strong> ${order._id}</p>
+
+<p>We will notify you when your order ships.</p>
+
+`
+
+});
+
+}
+
+}catch(e){
+console.log("EMAIL ERROR:",e);
+}
 
 /* =========================
    📉 AUTO STOCK REDUCE
@@ -150,11 +188,49 @@ router.put("/status/:id", verifyToken, verifyAdmin, async (req, res) => {
       });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { orderStatus: status },
-      { new: true }
-    );
+const order = await Order.findByIdAndUpdate(
+  req.params.id,
+  { orderStatus: status },
+  { new: true }
+);
+
+/* =========================
+   📧 ORDER STATUS EMAIL
+========================= */
+
+try{
+
+const user = await User.findById(order.userId);
+
+if(user?.email){
+
+await transporter.sendMail({
+
+from:process.env.EMAIL_USER,
+to:user.email,
+subject:`Order Update - ${status}`,
+
+html:`
+
+<h2>Order Status Updated</h2>
+
+<p>Your order status is now:</p>
+
+<h3>${status.toUpperCase()}</h3>
+
+<p>Order ID: ${order._id}</p>
+
+<p>Thank you for shopping with AL-ABUZER PERFUMES.</p>
+
+`
+
+});
+
+}
+
+}catch(e){
+console.log("EMAIL ERROR:",e);
+}
 
     res.json({
       success: true,
