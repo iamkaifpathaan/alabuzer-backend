@@ -8,6 +8,7 @@ const cors = require("cors");
 const Order = require("./models/Order");
 const Product = require("./models/Product");
 const User = require("./models/User");
+const transporter = require("./utils/mailer");
 const orderRoutes = require("./routes/orderRoutes");
 
 const app = express();
@@ -30,7 +31,11 @@ app.use(express.json());
 
 // ================= DB CONNECT =================
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+    Product.collection.createIndex({ category: 1 });
+    Product.collection.createIndex({ slug: 1 });
+  })
   .catch(err => console.log(err));
 
 // ================= RAZORPAY INIT =================
@@ -102,7 +107,7 @@ app.get("/api/products", async (req, res) => {
       filter.category = category;
     }
 
-    const products = await Product.find(filter)
+    const products = await Product.find(filter).select("-__v")
       .sort({ createdAt: -1 });
 
     res.json({
@@ -113,6 +118,32 @@ app.get("/api/products", async (req, res) => {
   } catch (err) {
     res.status(500).json({
       success: false,
+      error: err.message
+    });
+  }
+});
+
+// Get Single Product by Slug
+app.get("/api/products/:slug", async (req, res) => {
+  try{
+
+    const product = await Product.findOne({ slug: req.params.slug }).select("-__v");
+
+    if(!product){
+      return res.status(404).json({
+        success:false,
+        message:"Product not found"
+      });
+    }
+
+    res.json({
+      success:true,
+      data: product
+    });
+
+  }catch(err){
+    res.status(500).json({
+      success:false,
       error: err.message
     });
   }
@@ -176,7 +207,6 @@ app.post("/api/auth/signup", async (req, res) => {
 
 // Login
 const jwt = require("jsonwebtoken");
-
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -193,21 +223,24 @@ app.post("/api/auth/login", async (req, res) => {
       return res.json({ success: false, message: "Invalid credentials" });
     }
 
-    // 🔐 TOKEN GENERATE
-    const token = jwt.sign(
-      {
-        id: user._id,
-        role: user.role
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+// 🔐 TOKEN GENERATE
+const token = jwt.sign(
+  {
+    id: user._id,
+    role: user.role
+  },
+  process.env.JWT_SECRET,
+  { expiresIn: "7d" }
+);
 
-    res.json({
-      success: true,
-      token,
-      user
-    });
+// REMOVE SENSITIVE DATA
+const { password: userPassword, resetOtp, resetOtpExpire, ...safeUser } = user._doc;
+
+res.json({
+  success: true,
+  token,
+  user: safeUser
+});
 
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -328,20 +361,47 @@ message:"Reset failed"
 // 💳 CREATE RAZORPAY ORDER
 // ================================
 
-app.post("/api/payment/create-order", async (req, res) => {
-  try {
+app.post("/api/payment/create-order", verifyToken, async (req, res) => {
 
-    const { amount } = req.body;
+  try{
 
-    if (!amount || amount <= 0) {
+    const { items } = req.body;
+
+    if(!items || !items.length){
       return res.status(400).json({
-        success: false,
-        message: "Invalid amount"
+        success:false,
+        message:"No items"
       });
     }
 
+    let total = 0;
+
+    for(const item of items){
+
+        if(!item.slug || !item.qty || item.qty <= 0 || item.qty > 10){
+        return res.status(400).json({
+        success:false,
+        message:"Invalid cart item"
+      });
+     }
+
+      const product = await Product.findOne({ slug:item.slug });
+
+      if(!product){
+        return res.status(400).json({
+          success:false,
+          message:"Product not found"
+        });
+      }
+
+      const price = product.discountPrice || product.price;
+
+      total += price * item.qty;
+
+    }
+
     const options = {
-      amount: amount * 100, // convert ₹ → paisa
+      amount: total * 100,
       currency: "INR",
       receipt: "receipt_" + Date.now()
     };
@@ -349,19 +409,23 @@ app.post("/api/payment/create-order", async (req, res) => {
     const order = await razorpay.orders.create(options);
 
     res.json({
-      success: true,
-      orderId: order.id,              // ⭐ IMPORTANT
-      amount: order.amount,
-      key: process.env.RAZORPAY_KEY_ID  // ⭐ CRITICAL FIX
+      success:true,
+      orderId:order.id,
+      amount:order.amount,
+      key:process.env.RAZORPAY_KEY_ID
     });
 
-  } catch (err) {
+  }catch(err){
+
     console.error("RAZORPAY ERROR:", err);
+
     res.status(500).json({
-      success: false,
-      message: "Payment order failed"
+      success:false,
+      message:"Payment order failed"
     });
+
   }
+
 });
 
 // ================================
@@ -369,6 +433,7 @@ app.post("/api/payment/create-order", async (req, res) => {
 // ================================
 
 app.post("/api/payment/verify", verifyToken, async (req, res) => {
+
   try {
 
     const {
@@ -381,6 +446,34 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
 
     const userId = req.user.id;
 
+    // ================= STOCK VALIDATION =================
+
+    for(const item of items){
+
+      const product = await Product.findOne({ slug:item.slug });
+
+      if(!product){
+        return res.status(400).json({
+          success:false,
+          message:"Product not found"
+        });
+      }
+
+      if(product.trackStock && !product.allowBackorder){
+
+        if(product.stock < item.qty){
+          return res.status(400).json({
+            success:false,
+            message:`${product.name} is out of stock`
+          });
+        }
+
+      }
+
+    }
+
+    // ================= SIGNATURE VERIFY =================
+
     const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
@@ -388,39 +481,57 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
       .update(body.toString())
       .digest("hex");
 
-    if (expectedSignature !== razorpay_signature) {
+    if(expectedSignature !== razorpay_signature){
       return res.status(400).json({
-        success: false,
-        message: "Payment verification failed"
+        success:false,
+        message:"Payment verification failed"
       });
     }
 
-    // ✅ PAYMENT VERIFIED — NOW SAVE ORDER
+    // ================= SAVE ORDER =================
 
     const order = new Order({
       userId,
       items,
       shippingAddress,
-      paymentMethod: "Razorpay"
+      paymentMethod:"Razorpay"
     });
 
     await order.save();
 
+    // ================= REDUCE STOCK =================
+
+    for(const item of items){
+
+      const product = await Product.findOne({ slug:item.slug });
+
+      if(product && product.trackStock){
+
+        product.stock = Math.max(0, product.stock - item.qty);
+
+        await product.save();
+
+      }
+
+    }
+
     res.json({
-      success: true,
-      message: "Payment verified and order saved"
+      success:true,
+      message:"Payment verified and order saved"
     });
 
-  } catch (err) {
+  } catch(err){
+
     console.error("VERIFY ERROR:", err);
-    res.status(500).json({
-      success: false,
-      message: "Verification failed"
-    });
-  }
-});
 
-const transporter = require("./utils/mailer");
+    res.status(500).json({
+      success:false,
+      message:"Verification failed"
+    });
+
+  }
+
+});
 
 app.get("/test-email", async (req,res)=>{
 

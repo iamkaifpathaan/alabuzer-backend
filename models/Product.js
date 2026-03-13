@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-
+const slugify = require("slugify");
 const productSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -7,9 +7,8 @@ const productSchema = new mongoose.Schema({
   },
 
   slug: {
-    type: String,
-    required: true,
-    unique: true
+  type: String,
+  unique: true
   },
 
   price: {
@@ -77,5 +76,31 @@ const productSchema = new mongoose.Schema({
   }
 
 }, { timestamps: true });
+
+productSchema.index({ slug: 1 });
+
+productSchema.pre("validate", async function(next){
+
+  if(!this.slug && this.name){
+
+    let baseSlug = slugify(this.name,{
+      lower:true,
+      strict:true
+    });
+
+    let slug = baseSlug;
+    let counter = 1;
+
+    while(await mongoose.models.Product.findOne({ slug })){
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+
+    this.slug = slug;
+  }
+
+  next();
+
+});
 
 module.exports = mongoose.model("Product", productSchema);
