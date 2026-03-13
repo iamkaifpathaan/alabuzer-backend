@@ -34,7 +34,6 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log("✅ MongoDB Connected");
     Product.collection.createIndex({ category: 1 });
-    Product.collection.createIndex({ slug: 1 });
   })
   .catch(err => console.log(err));
 
