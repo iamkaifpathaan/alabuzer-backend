@@ -1,10 +1,14 @@
 const jwt = require("jsonwebtoken");
 
 function verifyToken(req, res, next) {
+
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    return res.status(401).json({ success: false, message: "No token provided" });
+    return res.status(401).json({
+      success: false,
+      message: "No token provided"
+    });
   }
 
   const token = authHeader.split(" ")[1];
@@ -14,15 +18,26 @@ function verifyToken(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(403).json({ success: false, message: "Invalid token" });
+    return res.status(401).json({
+      success: false,
+      message: "Invalid token"
+    });
   }
 }
 
 function verifyAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
-    return res.status(403).json({ success: false, message: "Admin only" });
+
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({
+      success: false,
+      message: "Admin access required"
+    });
   }
+
   next();
 }
 
-module.exports = { verifyToken, verifyAdmin };
+module.exports = {
+  verifyToken,
+  verifyAdmin
+};

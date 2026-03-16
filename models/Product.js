@@ -78,8 +78,6 @@ const productSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-productSchema.index({ slug: 1 });
-
 productSchema.pre("validate", async function(next){
 
   if(!this.slug && this.name){
