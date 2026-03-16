@@ -78,7 +78,7 @@ const productSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-productSchema.pre("validate", async function(next){
+productSchema.pre("validate", async function(){
 
   if(!this.slug && this.name){
 
@@ -97,8 +97,6 @@ productSchema.pre("validate", async function(next){
 
     this.slug = slug;
   }
-
-  next();
 
 });
 
