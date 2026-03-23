@@ -188,11 +188,45 @@ router.put("/status/:id", verifyToken, verifyAdmin, async (req, res) => {
       });
     }
 
-const order = await Order.findByIdAndUpdate(
-  req.params.id,
-  { orderStatus: status },
-  { new: true }
-);
+// 🔥 pehle order fetch kar
+const order = await Order.findById(req.params.id);
+
+if (!order) {
+  return res.status(404).json({
+    success: false,
+    message: "Order not found"
+  });
+}
+
+// 🔒 FLOW CONTROL
+const flow = {
+  placed: ["confirmed","cancelled"],
+  confirmed: ["shipped","cancelled"],
+  shipped: ["delivered"],
+  delivered: [],
+  cancelled: []
+};
+
+const current = order.orderStatus;
+
+// ❌ invalid jump block
+if(!flow[current].includes(status)){
+  return res.status(400).json({
+    success:false,
+    message:"Invalid status transition"
+  });
+}
+
+if(["delivered","cancelled"].includes(current)){
+  return res.status(400).json({
+    success:false,
+    message:"Final status cannot be changed"
+  });
+}
+
+// 🔥 ab update kar
+order.orderStatus = status;
+await order.save();
 
 /* =========================
    📧 ORDER STATUS EMAIL
