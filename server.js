@@ -1,5 +1,6 @@
 require("dotenv").config();
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 const crypto = require("crypto");
 const { verifyToken, verifyAdmin } = require("./middleware/auth");
 const Razorpay = require("razorpay");
@@ -220,7 +221,15 @@ app.post("/api/auth/send-login-otp", async (req,res)=>{
 
     await user.save();
 
-    console.log("OTP:", otp); // ⚠️ TEMP (SMS later)
+    await axios.get("https://www.fast2sms.com/dev/bulkV2", {
+      params: {
+        authorization: process.env.FAST2SMS_KEY,
+        route: "otp",
+        variables_values: otp,
+        flash: 0,
+        numbers: phone
+      }
+    });
 
     res.json({
       success:true,
