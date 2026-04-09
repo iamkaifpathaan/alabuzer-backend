@@ -68,7 +68,7 @@ try{
 
 const user = await User.findById(userId);
 
-if(user?.email){
+if(false){ // email system disabled
 
 await transporter.sendMail({
 
@@ -236,7 +236,7 @@ try{
 
 const user = await User.findById(order.userId);
 
-if(user?.email){
+if(false){
 
 await transporter.sendMail({
 
