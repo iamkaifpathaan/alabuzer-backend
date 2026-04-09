@@ -221,19 +221,15 @@ app.post("/api/auth/send-login-otp", async (req,res)=>{
 
     await user.save();
 
-const smsRes = await axios.get("https://www.fast2sms.com/dev/bulkV2", {
-  headers: {
-    authorization: process.env.FAST2SMS_KEY
-  },
+await axios.get("https://www.fast2sms.com/dev/bulkV2", {
   params: {
+    authorization: process.env.FAST2SMS_KEY,  // 🔥 yaha daal
     route: "q",
     message: `Your OTP is ${otp}`,
     language: "english",
     numbers: phone
   }
 });
-
-console.log("SMS RESPONSE:", smsRes.data);
     
 
     res.json({
