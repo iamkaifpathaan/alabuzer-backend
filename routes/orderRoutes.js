@@ -51,12 +51,26 @@ for (const item of items) {
   }
 }
 
-    const order = new Order({
-      userId,
-      items,
-      shippingAddress,
-      paymentMethod
-    });
+const enrichedItems = [];
+
+for(const item of items){
+  const product = await Product.findOne({ slug:item.slug });
+
+  enrichedItems.push({
+    slug: item.slug,
+    name: product.name,
+    price: product.price,
+    image: product.images?.[0],
+    qty: item.qty
+  });
+}
+
+const order = new Order({
+  userId,
+  items: enrichedItems,
+  shippingAddress,
+  paymentMethod
+});
 
     await order.save();
 

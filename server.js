@@ -204,7 +204,7 @@ app.post("/api/auth/send-login-otp", async (req,res)=>{
       });
     }
 
-    if(user.otpExpire && Date.now() < user.otpExpire - 4*60*1000){
+    if(user.otpExpire && Date.now() < user.otpExpire){
     return res.json({
     success:false,
     message:"Wait before requesting OTP again"
@@ -221,15 +221,20 @@ app.post("/api/auth/send-login-otp", async (req,res)=>{
 
     await user.save();
 
-    await axios.get("https://www.fast2sms.com/dev/bulkV2", {
-      params: {
-        authorization: process.env.FAST2SMS_KEY,
-        route: "otp",
-        variables_values: otp,
-        flash: 0,
-        numbers: phone
-      }
-    });
+const smsRes = await axios.get("https://www.fast2sms.com/dev/bulkV2", {
+  headers: {
+    authorization: process.env.FAST2SMS_KEY
+  },
+  params: {
+    route: "q",
+    message: `Your OTP is ${otp}`,
+    language: "english",
+    numbers: phone
+  }
+});
+
+console.log("SMS RESPONSE:", smsRes.data);
+    
 
     res.json({
       success:true,
