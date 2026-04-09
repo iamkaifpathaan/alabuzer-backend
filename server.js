@@ -241,9 +241,16 @@ console.log("SMS RESPONSE:", smsRes.data);
       message:"OTP sent"
     });
 
-  }catch(err){
-    res.status(500).json({ success:false });
-  }
+}catch(err){
+
+  console.log("OTP ERROR FULL:", err);
+  console.log("OTP ERROR RESPONSE:", err.response?.data);
+
+  res.status(500).json({
+    success:false,
+    message: err.response?.data?.message || err.message || "OTP failed"
+  });
+}
 
 });
 
