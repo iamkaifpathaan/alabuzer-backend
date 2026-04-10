@@ -20,6 +20,16 @@ router.post("/", verifyToken, async (req, res) => {
 
 const userId = req.user.id;   // 🔐 TAKE FROM TOKEN
 
+const user = await User.findById(userId);
+
+if(!user.phone){
+  return res.status(401).json({
+    success:false,
+    requirePhone:true,
+    message:"Phone verification required"
+  });
+}
+
     if (!items || !items.length) {
       return res.status(400).json({
         success: false,
@@ -31,7 +41,10 @@ const userId = req.user.id;   // 🔐 TAKE FROM TOKEN
    📦 STOCK VALIDATION
 ========================= */
 
+const enrichedItems = [];
+
 for (const item of items) {
+
   const product = await Product.findOne({ slug: item.slug });
 
   if (!product) {
@@ -49,12 +62,6 @@ for (const item of items) {
       });
     }
   }
-}
-
-const enrichedItems = [];
-
-for(const item of items){
-  const product = await Product.findOne({ slug:item.slug });
 
   enrichedItems.push({
     slug: item.slug,
@@ -63,6 +70,7 @@ for(const item of items){
     image: product.images?.[0],
     qty: item.qty
   });
+
 }
 
 const order = new Order({
@@ -73,6 +81,73 @@ const order = new Order({
 });
 
     await order.save();
+
+app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
+
+  try{
+
+    const { phone } = req.body;
+
+    if(!/^[6-9]\d{9}$/.test(phone)){
+      return res.json({ success:false, message:"Invalid phone" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    const otp = String(Math.floor(100000 + Math.random()*900000));
+
+    user.otp = otp;
+    user.otpExpire = Date.now() + 5*60*1000;
+
+    await user.save();
+
+    await axios.get("https://www.fast2sms.com/dev/bulkV2", {
+      params: {
+        authorization: process.env.FAST2SMS_KEY,
+        route: "q",
+        message: `Your OTP is ${otp}`,
+        language: "english",
+        numbers: phone
+      }
+    });
+
+    res.json({ success:true });
+
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
+
+});    
+
+app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
+
+  try{
+
+    const { phone, otp } = req.body;
+
+    const user = await User.findById(req.user.id);
+
+    if(!user.otp || user.otp != otp){
+      return res.json({ success:false, message:"Invalid OTP" });
+    }
+
+    if(Date.now() > user.otpExpire){
+      return res.json({ success:false, message:"OTP expired" });
+    }
+
+    user.phone = phone;
+    user.otp = null;
+    user.otpExpire = null;
+
+    await user.save();
+
+    res.json({ success:true });
+
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
+
+});
 
 /* =========================
    📧 ORDER PLACED EMAIL

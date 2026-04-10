@@ -177,105 +177,112 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req, res) => {
 // ================= AUTH =================
 
 // Signup
-const bcrypt = require("bcryptjs");
-app.post("/api/auth/send-login-otp", async (req,res)=>{
+const bcrypt = require("bcrypt");
+app.post("/api/auth/login", async (req,res)=>{
 
   try{
 
-    const { phone } = req.body;
+    const { email, password } = req.body;
 
-    if(!phone){
-      return res.json({ success:false, message:"Phone required" });
-    }
-
-    let user = await User.findOne({ phone });
-    if(!/^[6-9]\d{9}$/.test(phone)){
+    // email validation
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!emailPattern.test(email)){
       return res.json({
         success:false,
-        message:"Invalid phone number"
-      });
-    }    
-
-    // ✅ auto signup
-    if(!user){
-      user = new User({
-        phone,
-        name: "User_" + phone.slice(-4)
+        message:"Invalid email"
       });
     }
 
-    if(user.otpExpire && Date.now() < user.otpExpire){
-    return res.json({
-    success:false,
-    message:"Wait before requesting OTP again"
-    });
-    }
-    if(user.otpExpire && Date.now() > user.otpExpire){
-      user.otp = null;
-      user.otpExpire = null;
-      await user.save();
-    }
-    const otp = String(Math.floor(100000 + Math.random()*900000));
-    user.otp = otp;
-    user.otpExpire = Date.now() + 5*60*1000;
+    const user = await User.findOne({ email });
 
-    await user.save();
+    if(!user || !user.password){
+      return res.json({
+        success:false,
+        message:"User not found"
+      });
+    }
 
-await axios.get("https://www.fast2sms.com/dev/bulkV2", {
-  params: {
-    authorization: process.env.FAST2SMS_KEY,  // 🔥 yaha daal
-    route: "q",
-    message: `Your OTP is ${otp}`,
-    language: "english",
-    numbers: phone
-  }
-});
-    
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if(!isMatch){
+      return res.json({
+        success:false,
+        message:"Wrong password"
+      });
+    }
+
+    const token = jwt.sign(
+      { id:user._id, role:user.role },
+      process.env.JWT_SECRET,
+      { expiresIn:"7d" }
+    );
 
     res.json({
       success:true,
-      message:"OTP sent"
+      token,
+      user:{
+        _id:user._id,
+        name:user.name,
+        role:user.role
+      }
     });
 
-}catch(err){
-
-  console.log("OTP ERROR FULL:", err);
-  console.log("OTP ERROR RESPONSE:", err.response?.data);
-
-  res.status(500).json({
-    success:false,
-    message: err.response?.data?.message || err.message || "OTP failed"
-  });
-}
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
 
 });
 
-app.post("/api/auth/verify-login-otp", async (req,res)=>{
+app.post("/api/auth/signup", async (req,res)=>{
 
   try{
 
-    const { phone, otp } = req.body;
+    const { name, email, password } = req.body;
 
-    const user = await User.findOne({ phone });
-
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    // validations
+    if(!name || !email || !password){
+      return res.json({
+        success:false,
+        message:"All fields required"
+      });
     }
 
-    if(user.otp != otp){
-      return res.json({ success:false, message:"Invalid OTP" });
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!emailPattern.test(email)){
+      return res.json({
+        success:false,
+        message:"Invalid email"
+      });
     }
 
-    if(Date.now() > user.otpExpire){
-      return res.json({ success:false, message:"OTP expired" });
+    if(password.length < 6){
+      return res.json({
+        success:false,
+        message:"Password must be at least 6 characters"
+      });
     }
 
-    user.otp = null;
-    user.otpExpire = null;
+    // check existing user
+    const existing = await User.findOne({ email });
+
+    if(existing){
+      return res.json({
+        success:false,
+        message:"Email already registered"
+      });
+    }
+
+    // hash password
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = new User({
+      name,
+      email,
+      password: hashed
+    });
 
     await user.save();
 
-    // 🔐 JWT
     const token = jwt.sign(
       { id:user._id, role:user.role },
       process.env.JWT_SECRET,
@@ -312,7 +319,132 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
 
     res.json({
       success:true,
-      user
+      user:{
+  _id:user._id,
+  name:user.name,
+  role:user.role
+}
+    });
+
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
+
+});
+
+app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
+
+  try{
+
+    const { phone } = req.body;
+
+    if(!/^[6-9]\d{9}$/.test(phone)){
+      return res.json({ success:false, message:"Invalid phone" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    const otp = String(Math.floor(100000 + Math.random()*900000));
+
+    user.otp = otp;
+    user.otpExpire = Date.now() + 5*60*1000;
+
+    await user.save();
+
+    await axios.get("https://www.fast2sms.com/dev/bulkV2", {
+      params: {
+        authorization: process.env.FAST2SMS_KEY,
+        route: "q",
+        message: `Your OTP is ${otp}`,
+        language: "english",
+        numbers: phone
+      }
+    });
+
+    res.json({ success:true });
+
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
+
+});
+
+app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
+
+  try{
+
+    const { phone, otp } = req.body;
+
+    const user = await User.findById(req.user.id);
+
+    if(!user.otp || user.otp != otp){
+      return res.json({ success:false, message:"Invalid OTP" });
+    }
+
+    if(Date.now() > user.otpExpire){
+      return res.json({ success:false, message:"OTP expired" });
+    }
+
+    user.phone = phone;
+    user.otp = null;
+    user.otpExpire = null;
+
+    await user.save();
+
+    res.json({ success:true });
+
+  }catch(err){
+    res.status(500).json({ success:false });
+  }
+
+});
+
+app.post("/api/auth/reset-password", async (req,res)=>{
+
+  try{
+
+    const { email, password } = req.body;
+
+    if(!email || !password){
+      return res.json({
+        success:false,
+        message:"All fields required"
+      });
+    }
+
+    // email validation
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!emailPattern.test(email)){
+      return res.json({
+        success:false,
+        message:"Invalid email"
+      });
+    }
+
+    if(password.length < 6){
+      return res.json({
+        success:false,
+        message:"Password must be at least 6 characters"
+      });
+    }
+
+    const user = await User.findOne({ email });
+
+    if(!user){
+      return res.json({
+        success:false,
+        message:"User not found"
+      });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    user.password = hashed;
+    await user.save();
+
+    res.json({
+      success:true,
+      message:"Password updated"
     });
 
   }catch(err){
@@ -328,6 +460,16 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
 app.post("/api/payment/create-order", verifyToken, async (req, res) => {
 
   try{
+
+    const user = await User.findById(req.user.id);
+
+    if(!user.phone){
+      return res.status(401).json({
+        success:false,
+        requirePhone:true,
+        message:"Phone verification required"
+      });
+    }
 
     const { items } = req.body;
 

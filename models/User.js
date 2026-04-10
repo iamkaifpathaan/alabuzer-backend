@@ -2,10 +2,7 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
 
-  name: {
-    type: String,
-    default: "User"
-  },
+  name: String,
 
   phone: {
     type: String,
@@ -13,7 +10,15 @@ const userSchema = new mongoose.Schema({
     unique: true
   },
 
-  otp: Number,
+  email: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+
+  password: String,
+
+  otp: String,
   otpExpire: Date,
 
   role: {
