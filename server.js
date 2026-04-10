@@ -143,11 +143,12 @@ app.get("/api/products/:slug", async (req, res) => {
     });
 
   }catch(err){
-    res.status(500).json({
-      success:false,
-      error: err.message
-    });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 });
 
 // Update Product
@@ -228,8 +229,12 @@ app.post("/api/auth/login", async (req,res)=>{
     });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
@@ -300,8 +305,12 @@ app.post("/api/auth/signup", async (req,res)=>{
     });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
@@ -327,8 +336,12 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
     });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
@@ -364,8 +377,12 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
     res.json({ success:true });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
@@ -394,8 +411,12 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
     res.json({ success:true });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
@@ -448,8 +469,12 @@ app.post("/api/auth/reset-password", async (req,res)=>{
     });
 
   }catch(err){
-    res.status(500).json({ success:false });
-  }
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
 
 });
 
