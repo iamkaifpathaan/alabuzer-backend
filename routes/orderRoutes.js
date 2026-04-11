@@ -22,7 +22,7 @@ const userId = req.user.id;   // 🔐 TAKE FROM TOKEN
 
 const user = await User.findById(userId);
 
-if(!user.phone){
+if(!user.phoneVerified){
   return res.status(401).json({
     success:false,
     requirePhone:true,

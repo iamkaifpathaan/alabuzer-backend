@@ -351,11 +351,18 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
 
     const { phone } = req.body;
 
+    const user = await User.findById(req.user.id);
+
+    if(user.phoneVerified){
+    return res.json({
+    success:true,
+    message:"Already verified"
+    });
+    }  
+    
     if(!/^[6-9]\d{9}$/.test(phone)){
       return res.json({ success:false, message:"Invalid phone" });
-    }
-
-    const user = await User.findById(req.user.id);
+    }    
 
     const otp = String(Math.floor(100000 + Math.random()*900000));
 
@@ -403,6 +410,7 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
     }
 
     user.phone = phone;
+    user.phoneVerified = true; 
     user.otp = null;
     user.otpExpire = null;
 
@@ -488,7 +496,7 @@ app.post("/api/payment/create-order", verifyToken, async (req, res) => {
 
     const user = await User.findById(req.user.id);
 
-    if(!user.phone){
+    if(!user.phoneVerified){
       return res.status(401).json({
         success:false,
         requirePhone:true,
