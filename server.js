@@ -224,6 +224,7 @@ app.post("/api/auth/login", async (req,res)=>{
       user:{
         _id:user._id,
         name:user.name,
+        email:user.email,
         role:user.role
       }
     });
@@ -300,6 +301,7 @@ app.post("/api/auth/signup", async (req,res)=>{
       user:{
         _id:user._id,
         name:user.name,
+        email:user.email,
         role:user.role
       }
     });
@@ -331,6 +333,7 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
       user:{
   _id:user._id,
   name:user.name,
+  email:user.email,
   role:user.role
 }
     });
