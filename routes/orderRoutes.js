@@ -82,7 +82,7 @@ const order = new Order({
 
     await order.save();
 
-app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
+router.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
 
   try{
 
