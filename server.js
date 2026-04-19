@@ -446,8 +446,12 @@ app.post("/api/auth/send-otp", async (req,res)=>{
 
     const { email } = req.body;
 
-    if(!email){
+    if(!email || typeof email !== "string"){
       return res.json({ success:false, message:"Email required" });
+    }
+
+    if(email.length > 254){
+      return res.json({ success:false, message:"Invalid email" });
     }
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -455,7 +459,8 @@ app.post("/api/auth/send-otp", async (req,res)=>{
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const user = await User.findOne({ email });
+    const sanitizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: sanitizedEmail });
 
     if(!user){
       return res.json({ success:false, message:"User not found" });
@@ -470,7 +475,7 @@ app.post("/api/auth/send-otp", async (req,res)=>{
 
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
-      to: email,
+      to: sanitizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
@@ -503,8 +508,12 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
 
     const { email, otp } = req.body;
 
-    if(!email || !otp){
+    if(!email || typeof email !== "string" || !otp){
       return res.json({ success:false, message:"Email and OTP required" });
+    }
+
+    if(email.length > 254){
+      return res.json({ success:false, message:"Invalid email" });
     }
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -512,7 +521,8 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const user = await User.findOne({ email });
+    const sanitizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: sanitizedEmail });
 
     if(!user){
       return res.json({ success:false, message:"User not found" });
