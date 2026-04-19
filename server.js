@@ -440,6 +440,114 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
 
 });
 
+app.post("/api/auth/send-otp", async (req,res)=>{
+
+  try{
+
+    const { email } = req.body;
+
+    if(!email || typeof email !== "string"){
+      return res.json({ success:false, message:"Email required" });
+    }
+
+    if(email.length > 254){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!emailPattern.test(email)){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    const sanitizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: sanitizedEmail });
+
+    if(!user){
+      return res.json({ success:false, message:"User not found" });
+    }
+
+    const otp = String(Math.floor(100000 + Math.random()*900000));
+
+    user.emailOtp = otp;
+    user.emailOtpExpire = Date.now() + 10*60*1000;
+
+    await user.save();
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: sanitizedEmail,
+      subject: "AL ABUZER - Password Reset OTP",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
+          <h2 style="color:#d4af37;text-align:center;">AL ABUZER PERFUMES</h2>
+          <h3 style="color:#fff;text-align:center;">Password Reset</h3>
+          <p style="color:#ccc;">Your OTP for password reset is:</p>
+          <div style="background:#d4af37;color:#1a1a2e;font-size:32px;font-weight:bold;text-align:center;padding:16px;border-radius:8px;letter-spacing:8px;">
+            ${otp}
+          </div>
+          <p style="color:#ccc;font-size:13px;margin-top:16px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+        </div>
+      `
+    });
+
+    res.json({ success:true, message:"OTP sent to email" });
+
+  }catch(err){
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
+
+});
+
+app.post("/api/auth/verify-otp", async (req,res)=>{
+
+  try{
+
+    const { email, otp } = req.body;
+
+    if(!email || typeof email !== "string" || !otp){
+      return res.json({ success:false, message:"Email and OTP required" });
+    }
+
+    if(email.length > 254){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(!emailPattern.test(email)){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    const sanitizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: sanitizedEmail });
+
+    if(!user){
+      return res.json({ success:false, message:"User not found" });
+    }
+
+    if(!user.emailOtp || user.emailOtp !== otp){
+      return res.json({ success:false, message:"Invalid OTP" });
+    }
+
+    if(Date.now() > user.emailOtpExpire){
+      return res.json({ success:false, message:"OTP expired" });
+    }
+
+    res.json({ success:true, message:"OTP verified" });
+
+  }catch(err){
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
+
+});
+
 app.post("/api/auth/reset-password", async (req,res)=>{
 
   try{
