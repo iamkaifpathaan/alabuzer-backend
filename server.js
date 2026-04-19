@@ -444,9 +444,9 @@ app.post("/api/auth/send-otp", async (req,res)=>{
 
   try{
 
-    const { email } = req.body;
+    const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
 
-    if(!email || typeof email !== "string"){
+    if(!email){
       return res.json({ success:false, message:"Email required" });
     }
 
@@ -454,12 +454,12 @@ app.post("/api/auth/send-otp", async (req,res)=>{
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
     if(!emailPattern.test(email)){
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase().trim();
+    const sanitizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: sanitizedEmail });
 
     if(!user){
@@ -506,9 +506,10 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
 
   try{
 
-    const { email, otp } = req.body;
+    const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
+    const { otp } = req.body;
 
-    if(!email || typeof email !== "string" || !otp){
+    if(!email || !otp){
       return res.json({ success:false, message:"Email and OTP required" });
     }
 
@@ -516,12 +517,12 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
     if(!emailPattern.test(email)){
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase().trim();
+    const sanitizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: sanitizedEmail });
 
     if(!user){
