@@ -6,8 +6,8 @@ const userSchema = new mongoose.Schema({
 
   phone: {
     type: String,
-    required: true,
-    unique: true
+    unique: true,
+    sparse: true
   },
 
   phoneVerified: {
@@ -22,6 +22,14 @@ const userSchema = new mongoose.Schema({
   },
 
   password: String,
+
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+
+  emailOtp: String,
+  emailOtpExpire: Date,
 
   otp: String,
   otpExpire: Date,
