@@ -31,6 +31,15 @@ const userSchema = new mongoose.Schema({
   emailOtp: String,
   emailOtpExpire: Date,
 
+  pendingEmail: String,
+  pendingEmailOtp: String,
+  pendingEmailOtpExpire: Date,
+  pendingEmailOtpResendCount: {
+    type: Number,
+    default: 0
+  },
+  pendingEmailOtpLastSent: Date,
+
   resetAllowed: {
     type: Boolean,
     default: false

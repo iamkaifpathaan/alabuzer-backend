@@ -16,6 +16,11 @@ const orderRoutes = require("./routes/orderRoutes");
 const app = express();
 const rateLimit = require("express-rate-limit");
 
+// ================= EMAIL CHANGE CONSTANTS =================
+const EMAIL_CHANGE_RESEND_LIMIT = 5;
+const EMAIL_CHANGE_COOLDOWN_MS = 60 * 1000;
+const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
   max: 100
@@ -346,6 +351,247 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
   role:user.role
 }
     });
+
+  }catch(err){
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
+
+});
+
+// ================================
+// 📧 INITIATE EMAIL CHANGE (send OTP to new email)
+// ================================
+
+app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
+
+  try{
+
+    const newEmail = typeof req.body.newEmail === "string" ? req.body.newEmail.trim().toLowerCase() : "";
+
+    if(!newEmail){
+      return res.json({ success:false, message:"New email required" });
+    }
+
+    if(newEmail.length > 254){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    if(!EMAIL_PATTERN.test(newEmail)){
+      return res.json({ success:false, message:"Invalid email" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if(!user){
+      return res.json({ success:false, message:"User not found" });
+    }
+
+    if(user.email && user.email.toLowerCase() === newEmail){
+      return res.json({ success:false, message:"New email must be different from current email" });
+    }
+
+    const existing = await User.findOne({ email: newEmail, _id: { $ne: req.user.id } });
+    if(existing){
+      return res.json({ success:false, message:"Email already in use by another account" });
+    }
+
+    // Rate limit: allow at most 5 resends per pending change, and enforce 60s cooldown
+    if(
+      user.pendingEmail === newEmail &&
+      user.pendingEmailOtpLastSent &&
+      Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
+    ){
+      return res.json({ success:false, message:"Please wait before requesting another OTP" });
+    }
+
+    // Reset count if initiating a new email (different from current pending)
+    if(user.pendingEmail !== newEmail){
+      user.pendingEmailOtpResendCount = 0;
+    }
+
+    if(user.pendingEmailOtpResendCount >= EMAIL_CHANGE_RESEND_LIMIT){
+      return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
+    }
+
+    const otp = crypto.randomInt(100000, 1000000).toString();
+
+    user.pendingEmail = newEmail;
+    user.pendingEmailOtp = otp;
+    user.pendingEmailOtpExpire = new Date(Date.now() + 10*60*1000);
+    user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
+    user.pendingEmailOtpLastSent = new Date();
+
+    await user.save();
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: newEmail,
+      subject: "AL ABUZER - Verify Your New Email",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
+          <h2 style="color:#d4af37;text-align:center;">AL ABUZER PERFUMES</h2>
+          <h3 style="color:#fff;text-align:center;">Email Change Verification</h3>
+          <p style="color:#ccc;">Your OTP to verify your new email address is:</p>
+          <div style="background:#d4af37;color:#1a1a2e;font-size:32px;font-weight:bold;text-align:center;padding:16px;border-radius:8px;letter-spacing:8px;">
+            ${otp}
+          </div>
+          <p style="color:#ccc;font-size:13px;margin-top:16px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+          <p style="color:#ccc;font-size:13px;">If you did not request this, please ignore this email.</p>
+        </div>
+      `
+    });
+
+    res.json({ success:true, message:"OTP sent to new email" });
+
+  }catch(err){
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
+
+});
+
+// ================================
+// ✅ VERIFY EMAIL CHANGE OTP
+// ================================
+
+app.post("/api/user/verify-email-change", verifyToken, async (req,res)=>{
+
+  try{
+
+    const { otp } = req.body;
+
+    if(!otp){
+      return res.json({ success:false, message:"OTP required" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if(!user){
+      return res.json({ success:false, message:"User not found" });
+    }
+
+    if(!user.pendingEmail){
+      return res.json({ success:false, message:"No pending email change found" });
+    }
+
+    if(!user.pendingEmailOtp || user.pendingEmailOtp !== String(otp)){
+      return res.json({ success:false, message:"Invalid OTP" });
+    }
+
+    if(!user.pendingEmailOtpExpire || Date.now() > user.pendingEmailOtpExpire.getTime()){
+      return res.json({ success:false, message:"OTP expired" });
+    }
+
+    // Double-check the pending email is still not taken by another account
+    const conflict = await User.findOne({ email: user.pendingEmail, _id: { $ne: user._id } });
+    if(conflict){
+      user.pendingEmail = undefined;
+      user.pendingEmailOtp = undefined;
+      user.pendingEmailOtpExpire = undefined;
+      user.pendingEmailOtpResendCount = 0;
+      user.pendingEmailOtpLastSent = undefined;
+      await user.save();
+      return res.json({ success:false, message:"Email already in use by another account" });
+    }
+
+    const newEmail = user.pendingEmail;
+
+    user.email = newEmail;
+    user.emailVerified = true;
+    user.pendingEmail = undefined;
+    user.pendingEmailOtp = undefined;
+    user.pendingEmailOtpExpire = undefined;
+    user.pendingEmailOtpResendCount = 0;
+    user.pendingEmailOtpLastSent = undefined;
+
+    await user.save();
+
+    res.json({
+      success:true,
+      message:"Email updated successfully",
+      user:{
+        _id:user._id,
+        name:user.name,
+        email:user.email,
+        emailVerified:user.emailVerified,
+        role:user.role
+      }
+    });
+
+  }catch(err){
+  console.error("ERROR:", err);
+  res.status(500).json({ 
+    success:false,
+    message: err.message
+  });
+}
+
+});
+
+// ================================
+// 🔁 RESEND EMAIL CHANGE OTP
+// ================================
+
+app.post("/api/user/resend-email-change-otp", verifyToken, async (req,res)=>{
+
+  try{
+
+    const user = await User.findById(req.user.id);
+
+    if(!user){
+      return res.json({ success:false, message:"User not found" });
+    }
+
+    if(!user.pendingEmail){
+      return res.json({ success:false, message:"No pending email change found" });
+    }
+
+    if(
+      user.pendingEmailOtpLastSent &&
+      Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
+    ){
+      return res.json({ success:false, message:"Please wait before requesting another OTP" });
+    }
+
+    if((user.pendingEmailOtpResendCount || 0) >= EMAIL_CHANGE_RESEND_LIMIT){
+      return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
+    }
+
+    const otp = crypto.randomInt(100000, 1000000).toString();
+
+    user.pendingEmailOtp = otp;
+    user.pendingEmailOtpExpire = new Date(Date.now() + 10*60*1000);
+    user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
+    user.pendingEmailOtpLastSent = new Date();
+
+    await user.save();
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: user.pendingEmail,
+      subject: "AL ABUZER - Verify Your New Email",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
+          <h2 style="color:#d4af37;text-align:center;">AL ABUZER PERFUMES</h2>
+          <h3 style="color:#fff;text-align:center;">Email Change Verification</h3>
+          <p style="color:#ccc;">Your OTP to verify your new email address is:</p>
+          <div style="background:#d4af37;color:#1a1a2e;font-size:32px;font-weight:bold;text-align:center;padding:16px;border-radius:8px;letter-spacing:8px;">
+            ${otp}
+          </div>
+          <p style="color:#ccc;font-size:13px;margin-top:16px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+          <p style="color:#ccc;font-size:13px;">If you did not request this, please ignore this email.</p>
+        </div>
+      `
+    });
+
+    res.json({ success:true, message:"OTP resent to new email" });
 
   }catch(err){
   console.error("ERROR:", err);
