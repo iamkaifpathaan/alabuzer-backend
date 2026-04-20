@@ -730,8 +730,9 @@ app.post("/api/auth/send-otp", async (req,res)=>{
 
     const otp = String(Math.floor(100000 + Math.random()*900000));
 
-    user.emailOtp = otp;
-    user.emailOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtp = otp;
+    user.resetOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtpVerified = false;
 
     await user.save();
 
@@ -791,19 +792,17 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
       return res.json({ success:false, message:"User not found" });
     }
 
-    if(!user.emailOtp || user.emailOtp !== otp){
+    if(!user.resetOtp || user.resetOtp !== otp){
       return res.json({ success:false, message:"Invalid OTP" });
     }
 
-    if(Date.now() > user.emailOtpExpire){
+    if(Date.now() > user.resetOtpExpire){
       return res.json({ success:false, message:"OTP expired" });
     }
 
-    // Mark password reset as allowed for 10 minutes
-    user.resetAllowed = true;
-    user.resetAllowedExpire = new Date(Date.now() + 10*60*1000);
-    user.emailOtp = null;
-    user.emailOtpExpire = null;
+    user.resetOtpVerified = true;
+    user.resetOtp = null;
+    user.resetOtpExpire = new Date(Date.now() + 10*60*1000);
     await user.save();
 
     res.json({ success:true, message:"OTP verified" });
@@ -883,16 +882,16 @@ app.post("/api/auth/reset-password", async (req,res)=>{
     }
 
     // Check that OTP was verified via /verify-otp before allowing reset
-    if(!user.resetAllowed){
+    if(!user.resetOtpVerified){
       return res.status(400).json({
         success:false,
         message:"Please verify your OTP before resetting password"
       });
     }
 
-    if(Date.now() > user.resetAllowedExpire){
-      user.resetAllowed = false;
-      user.resetAllowedExpire = null;
+    if(Date.now() > user.resetOtpExpire){
+      user.resetOtpVerified = false;
+      user.resetOtpExpire = null;
       await user.save();
       return res.status(400).json({
         success:false,
@@ -903,8 +902,9 @@ app.post("/api/auth/reset-password", async (req,res)=>{
     const hashed = await bcrypt.hash(password, 10);
 
     user.password = hashed;
-    user.resetAllowed = false;
-    user.resetAllowedExpire = null;
+    user.resetOtpVerified = false;
+    user.resetOtp = null;
+    user.resetOtpExpire = null;
     await user.save();
 
     res.json({
@@ -945,8 +945,9 @@ app.post("/api/auth/forgot-password", async (req,res)=>{
 
     const otp = String(Math.floor(100000 + Math.random()*900000));
 
-    user.emailOtp = otp;
-    user.emailOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtp = otp;
+    user.resetOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtpVerified = false;
 
     await user.save();
 
