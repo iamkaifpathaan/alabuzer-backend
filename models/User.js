@@ -7,7 +7,11 @@ const userSchema = new mongoose.Schema({
   phone: {
     type: String,
     unique: true,
-    sparse: true
+    sparse: true,
+    set: function(v) {
+      if (v === null || v === undefined || v === '') return undefined;
+      return v;
+    }
   },
 
   phoneVerified: {
@@ -56,9 +60,10 @@ const userSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-userSchema.pre('save', async function() {
+userSchema.pre('save', function() {
   if (!this.phone) {
     this.phone = undefined;
+    this.unmarkModified('phone');
   }
 });
 

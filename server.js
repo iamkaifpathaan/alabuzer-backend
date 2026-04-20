@@ -348,6 +348,7 @@ app.put("/api/user/update", verifyToken, async (req,res)=>{
   _id:user._id,
   name:user.name,
   email:user.email,
+  emailVerified:user.emailVerified,
   role:user.role
 }
     });
@@ -427,23 +428,34 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
 
     await user.save();
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: newEmail,
-      subject: "AL ABUZER - Verify Your New Email",
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
-          <h2 style="color:#d4af37;text-align:center;">AL ABUZER PERFUMES</h2>
-          <h3 style="color:#fff;text-align:center;">Email Change Verification</h3>
-          <p style="color:#ccc;">Your OTP to verify your new email address is:</p>
-          <div style="background:#d4af37;color:#1a1a2e;font-size:32px;font-weight:bold;text-align:center;padding:16px;border-radius:8px;letter-spacing:8px;">
-            ${otp}
+    try {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: newEmail,
+        subject: "AL ABUZER - Verify Your New Email",
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
+            <h2 style="color:#d4af37;text-align:center;">AL ABUZER PERFUMES</h2>
+            <h3 style="color:#fff;text-align:center;">Email Change Verification</h3>
+            <p style="color:#ccc;">Your OTP to verify your new email address is:</p>
+            <div style="background:#d4af37;color:#1a1a2e;font-size:32px;font-weight:bold;text-align:center;padding:16px;border-radius:8px;letter-spacing:8px;">
+              ${otp}
+            </div>
+            <p style="color:#ccc;font-size:13px;margin-top:16px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
+            <p style="color:#ccc;font-size:13px;">If you did not request this, please ignore this email.</p>
           </div>
-          <p style="color:#ccc;font-size:13px;margin-top:16px;">This OTP is valid for 10 minutes. Do not share it with anyone.</p>
-          <p style="color:#ccc;font-size:13px;">If you did not request this, please ignore this email.</p>
-        </div>
-      `
-    });
+        `
+      });
+    } catch(mailErr) {
+      console.error("MAIL ERROR:", mailErr);
+      user.pendingEmail = undefined;
+      user.pendingEmailOtp = undefined;
+      user.pendingEmailOtpExpire = undefined;
+      user.pendingEmailOtpResendCount = Math.max(0, user.pendingEmailOtpResendCount - 1);
+      user.pendingEmailOtpLastSent = undefined;
+      await user.save();
+      return res.status(500).json({ success:false, message:"Failed to send OTP email. Please try again." });
+    }
 
     res.json({ success:true, message:"OTP sent to new email" });
 
@@ -665,6 +677,10 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
 
     if(Date.now() > user.otpExpire){
       return res.json({ success:false, message:"OTP expired" });
+    }
+
+    if(!phone || !/^[6-9]\d{9}$/.test(phone)){
+      return res.json({ success:false, message:"Invalid phone number" });
     }
 
     user.phone = phone;
@@ -1047,7 +1063,17 @@ app.post("/api/auth/verify-email-otp", verifyToken, async (req,res)=>{
 
     await user.save();
 
-    res.json({ success:true, message:"Email verified successfully" });
+    res.json({
+      success:true,
+      message:"Email verified successfully",
+      user:{
+        _id:user._id,
+        name:user.name,
+        email:user.email,
+        emailVerified:user.emailVerified,
+        role:user.role
+      }
+    });
 
   }catch(err){
   console.error("ERROR:", err);
