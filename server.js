@@ -16,6 +16,11 @@ const orderRoutes = require("./routes/orderRoutes");
 const app = express();
 const rateLimit = require("express-rate-limit");
 
+// ================= EMAIL CHANGE CONSTANTS =================
+const EMAIL_CHANGE_RESEND_LIMIT = 5;
+const EMAIL_CHANGE_COOLDOWN_MS = 60 * 1000;
+const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
   max: 100
@@ -375,8 +380,7 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
       return res.json({ success:false, message:"Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if(!emailPattern.test(newEmail)){
+    if(!EMAIL_PATTERN.test(newEmail)){
       return res.json({ success:false, message:"Invalid email" });
     }
 
@@ -396,13 +400,10 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
     }
 
     // Rate limit: allow at most 5 resends per pending change, and enforce 60s cooldown
-    const RESEND_LIMIT = 5;
-    const COOLDOWN_MS = 60 * 1000;
-
     if(
       user.pendingEmail === newEmail &&
       user.pendingEmailOtpLastSent &&
-      Date.now() - user.pendingEmailOtpLastSent.getTime() < COOLDOWN_MS
+      Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
     ){
       return res.json({ success:false, message:"Please wait before requesting another OTP" });
     }
@@ -412,11 +413,11 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
       user.pendingEmailOtpResendCount = 0;
     }
 
-    if(user.pendingEmailOtpResendCount >= RESEND_LIMIT){
+    if(user.pendingEmailOtpResendCount >= EMAIL_CHANGE_RESEND_LIMIT){
       return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
     }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const otp = crypto.randomInt(100000, 1000000).toString();
 
     user.pendingEmail = newEmail;
     user.pendingEmailOtp = otp;
@@ -552,21 +553,18 @@ app.post("/api/user/resend-email-change-otp", verifyToken, async (req,res)=>{
       return res.json({ success:false, message:"No pending email change found" });
     }
 
-    const RESEND_LIMIT = 5;
-    const COOLDOWN_MS = 60 * 1000;
-
     if(
       user.pendingEmailOtpLastSent &&
-      Date.now() - user.pendingEmailOtpLastSent.getTime() < COOLDOWN_MS
+      Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
     ){
       return res.json({ success:false, message:"Please wait before requesting another OTP" });
     }
 
-    if((user.pendingEmailOtpResendCount || 0) >= RESEND_LIMIT){
+    if((user.pendingEmailOtpResendCount || 0) >= EMAIL_CHANGE_RESEND_LIMIT){
       return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
     }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const otp = crypto.randomInt(100000, 1000000).toString();
 
     user.pendingEmailOtp = otp;
     user.pendingEmailOtpExpire = new Date(Date.now() + 10*60*1000);
