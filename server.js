@@ -537,6 +537,13 @@ app.post("/api/auth/verify-otp", async (req,res)=>{
       return res.json({ success:false, message:"OTP expired" });
     }
 
+    // Mark password reset as allowed for 10 minutes
+    user.resetAllowed = true;
+    user.resetAllowedExpire = new Date(Date.now() + 10*60*1000);
+    user.emailOtp = null;
+    user.emailOtpExpire = null;
+    await user.save();
+
     res.json({ success:true, message:"OTP verified" });
 
   }catch(err){
@@ -553,66 +560,89 @@ app.post("/api/auth/reset-password", async (req,res)=>{
 
   try{
 
-    const { email, otp, password, confirmPassword } = req.body;
+    // Accept both 'password' and 'newPassword' field names from frontend
+    const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
+    const password = req.body.password || req.body.newPassword;
+    // Accept both 'confirmPassword' and 'confirm_password' field names
+    const confirmPassword = req.body.confirmPassword || req.body.confirm_password;
 
-    if(!email || !otp || !password){
-      return res.json({
+    if(!email){
+      return res.status(400).json({
         success:false,
-        message:"All fields required"
+        message:"Email is required"
+      });
+    }
+
+    if(!password){
+      return res.status(400).json({
+        success:false,
+        message:"New password is required"
       });
     }
 
     // email validation
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if(email.length > 254){
+      return res.status(400).json({
+        success:false,
+        message:"Invalid email"
+      });
+    }
+
+    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
     if(!emailPattern.test(email)){
-      return res.json({
+      return res.status(400).json({
         success:false,
         message:"Invalid email"
       });
     }
 
     if(password.length < 8){
-      return res.json({
+      return res.status(400).json({
         success:false,
         message:"Password must be at least 8 characters"
       });
     }
 
     if(confirmPassword !== undefined && password !== confirmPassword){
-      return res.json({
+      return res.status(400).json({
         success:false,
         message:"Passwords do not match"
       });
     }
 
-    const user = await User.findOne({ email });
+    const sanitizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: sanitizedEmail });
 
     if(!user){
-      return res.json({
+      return res.status(404).json({
         success:false,
         message:"User not found"
       });
     }
 
-    if(!user.emailOtp || user.emailOtp !== otp){
-      return res.json({
+    // Check that OTP was verified via /verify-otp before allowing reset
+    if(!user.resetAllowed){
+      return res.status(400).json({
         success:false,
-        message:"Invalid OTP"
+        message:"Please verify your OTP before resetting password"
       });
     }
 
-    if(Date.now() > user.emailOtpExpire){
-      return res.json({
+    if(Date.now() > user.resetAllowedExpire){
+      user.resetAllowed = false;
+      user.resetAllowedExpire = null;
+      await user.save();
+      return res.status(400).json({
         success:false,
-        message:"OTP expired"
+        message:"Reset session expired. Please request a new OTP."
       });
     }
 
     const hashed = await bcrypt.hash(password, 10);
 
     user.password = hashed;
-    user.emailOtp = null;
-    user.emailOtpExpire = null;
+    user.resetAllowed = false;
+    user.resetAllowedExpire = null;
     await user.save();
 
     res.json({
@@ -1008,6 +1038,16 @@ res.send("Email failed");
 
 }
 
+});
+
+// ================= GLOBAL ERROR HANDLER =================
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error("UNHANDLED ERROR:", err.message);
+  res.status(500).json({
+    success: false,
+    message: "An internal server error occurred"
+  });
 });
 
 // ================= SERVER =================

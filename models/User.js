@@ -31,6 +31,12 @@ const userSchema = new mongoose.Schema({
   emailOtp: String,
   emailOtpExpire: Date,
 
+  resetAllowed: {
+    type: Boolean,
+    default: false
+  },
+  resetAllowedExpire: Date,
+
   otp: String,
   otpExpire: Date,
 
@@ -41,11 +47,10 @@ const userSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-userSchema.pre('save', function(next) {
+userSchema.pre('save', async function() {
   if (!this.phone) {
     this.phone = undefined;
   }
-  next();
 });
 
 module.exports = mongoose.model("User", userSchema);
