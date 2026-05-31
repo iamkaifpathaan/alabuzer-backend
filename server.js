@@ -50,18 +50,39 @@ app.use(express.json());
 // Log SMTP configuration and verify connectivity once at startup.
 (async () => {
   try {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      console.warn(
-        "[mailer] EMAIL_USER/EMAIL_PASS not set; OTP emails will fail until configured."
-      );
+    const hasSmtpConfig =
+      Boolean(process.env.SMTP_HOST) &&
+      Boolean(process.env.SMTP_USER) &&
+      Boolean(process.env.SMTP_PASS);
+    const hasGmailConfig = Boolean(process.env.EMAIL_USER) && Boolean(process.env.EMAIL_PASS);
+    const activeTransport =
+      transporter.__smtpHost === "smtp.gmail.com" ? "gmail" : "smtp";
+
+    console.log("[mailer] active transport:", activeTransport);
+    console.log("[mailer] transporter.__transportLabel:", transporter.__transportLabel);
+    console.log("[mailer] transporter.__smtpHost:", transporter.__smtpHost);
+    console.log("[mailer] transporter.__smtpPort:", transporter.__smtpPort);
+    console.log("[mailer] smtp env present:", {
+      smtpHostPresent: Boolean(process.env.SMTP_HOST),
+      smtpUserPresent: Boolean(process.env.SMTP_USER),
+      smtpPassPresent: Boolean(process.env.SMTP_PASS)
+    });
+
+    if (!hasSmtpConfig && !hasGmailConfig) {
+      console.warn("[mailer] No email credentials configured; OTP emails will fail.");
       return;
     }
 
     console.log("[mailer] verifying SMTP transport...");
     await transporter.verify();
-    console.log("[mailer] SMTP transport verified and ready.");
+    console.log("[mailer] SMTP connected:", {
+      host: transporter.__smtpHost,
+      port: transporter.__smtpPort
+    });
   } catch (err) {
-    console.error("[mailer] SMTP verify failed:", {
+    console.error("[mailer] SMTP failed:", {
+      host: transporter.__smtpHost,
+      port: transporter.__smtpPort,
       message: err?.message,
       code: err?.code,
       command: err?.command,
