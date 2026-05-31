@@ -1,74 +1,159 @@
-const nodemailer = require("nodemailer");
-
-function toBool(value, defaultValue = false) {
-  if (value === undefined || value === null || value === "") return defaultValue;
-  if (typeof value === "boolean") return value;
-  const v = String(value).trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "y";
-}
+const axios = require("axios");
 
 function toInt(value, defaultValue) {
   const n = Number.parseInt(value, 10);
   return Number.isFinite(n) ? n : defaultValue;
 }
 
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = toInt(process.env.SMTP_PORT, SMTP_HOST ? 587 : undefined);
-const SMTP_SECURE = toBool(process.env.SMTP_SECURE, false);
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL;
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || "AL ABUZER PERFUMES";
+const BREVO_TIMEOUT_MS = toInt(process.env.BREVO_TIMEOUT_MS, 10_000);
+const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
+const BREVO_ACCOUNT_ENDPOINT = "https://api.brevo.com/v3/account";
 
-let transporter;
-let transportLabel = "";
-
-// Prefer explicit SMTP configuration (most reliable for production).
-if (SMTP_HOST && SMTP_PORT && SMTP_USER && SMTP_PASS) {
-  transportLabel = "smtp";
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS
-    },
-    // Better observability in production; does not log credentials.
-    logger: toBool(process.env.SMTP_LOGGER, false),
-    debug: toBool(process.env.SMTP_DEBUG, false),
-    connectionTimeout: toInt(process.env.SMTP_CONNECTION_TIMEOUT_MS, 20_000),
-    greetingTimeout: toInt(process.env.SMTP_GREETING_TIMEOUT_MS, 20_000),
-    socketTimeout: toInt(process.env.SMTP_SOCKET_TIMEOUT_MS, 20_000)
-  });
-} else {
-  // Fallback: legacy Gmail transport
-  transportLabel = "gmail";
-  transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    },
-    logger: toBool(process.env.SMTP_LOGGER, false),
-    debug: toBool(process.env.SMTP_DEBUG, false),
-    connectionTimeout: toInt(process.env.SMTP_CONNECTION_TIMEOUT_MS, 20_000),
-    greetingTimeout: toInt(process.env.SMTP_GREETING_TIMEOUT_MS, 20_000),
-    socketTimeout: toInt(process.env.SMTP_SOCKET_TIMEOUT_MS, 20_000)
-  });
+function isTransientError(err) {
+  const status = err?.response?.status;
+  if (status === 429 || status >= 500) return true;
+  return ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(
+    err?.code
+  );
 }
 
-// Expose some metadata for startup logging.
-transporter.__transportLabel = transportLabel;
-transporter.__smtpHost = SMTP_HOST || "smtp.gmail.com";
-transporter.__smtpPort = SMTP_PORT || 465;
+function toRecipients(to) {
+  if (Array.isArray(to)) {
+    return to
+      .map((entry) => {
+        if (!entry) return null;
+        if (typeof entry === "string") return { email: entry };
+        if (typeof entry === "object" && entry.email) {
+          return {
+            email: String(entry.email),
+            name: entry.name ? String(entry.name) : undefined
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
 
-const originalSendMail = transporter.sendMail.bind(transporter);
-transporter.sendMail = (...args) => {
-  console.log("[mailer] sendMail transport:", {
-    activeTransport: transporter.__transportLabel,
-    host: transporter.__smtpHost,
-    port: transporter.__smtpPort
-  });
-  return originalSendMail(...args);
+  if (typeof to === "string" && to.trim()) return [{ email: to.trim() }];
+  if (typeof to === "object" && to?.email) {
+    return [{ email: String(to.email), name: to.name ? String(to.name) : undefined }];
+  }
+  return [];
+}
+
+function buildProviderError(err, fallbackMessage) {
+  const status = err?.response?.status;
+  const body = err?.response?.data;
+  const message =
+    body?.message || body?.code || err?.message || fallbackMessage || "Brevo request failed";
+  const error = new Error(message);
+  error.code = err?.code || body?.code || "BREVO_REQUEST_FAILED";
+  error.status = status;
+  error.provider = "brevo";
+  error.response = body;
+  return error;
+}
+
+async function sendMail(options = {}) {
+  if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) {
+    const configError = new Error("Brevo mailer is not configured");
+    configError.code = "MAILER_CONFIG";
+    throw configError;
+  }
+
+  const recipients = toRecipients(options.to);
+  if (!recipients.length) {
+    const invalidRecipientError = new Error("Valid recipient email is required");
+    invalidRecipientError.code = "MAILER_INVALID_RECIPIENT";
+    throw invalidRecipientError;
+  }
+
+  if (!options.subject) {
+    const invalidSubjectError = new Error("Email subject is required");
+    invalidSubjectError.code = "MAILER_INVALID_SUBJECT";
+    throw invalidSubjectError;
+  }
+
+  if (!options.html && !options.text) {
+    const invalidBodyError = new Error("Either html or text body is required");
+    invalidBodyError.code = "MAILER_INVALID_BODY";
+    throw invalidBodyError;
+  }
+
+  const payload = {
+    sender: {
+      email: BREVO_SENDER_EMAIL,
+      name: BREVO_SENDER_NAME
+    },
+    to: recipients,
+    subject: options.subject,
+    htmlContent: options.html,
+    textContent: options.text
+  };
+
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await axios.post(BREVO_ENDPOINT, payload, {
+        timeout: BREVO_TIMEOUT_MS,
+        headers: {
+          "api-key": BREVO_API_KEY,
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        }
+      });
+
+      console.log("[mailer] sendMail transport:", {
+        activeTransport: "brevo-http",
+        endpoint: BREVO_ENDPOINT,
+        status: response.status
+      });
+
+      return {
+        messageId: response.data?.messageId,
+        provider: "brevo"
+      };
+    } catch (err) {
+      if (attempt < maxAttempts && isTransientError(err)) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+        continue;
+      }
+      throw buildProviderError(err, "Failed to send email via Brevo");
+    }
+  }
+
+  throw new Error("Brevo send failed");
+}
+
+async function verify() {
+  if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) {
+    const configError = new Error("Missing BREVO_API_KEY or BREVO_SENDER_EMAIL");
+    configError.code = "MAILER_CONFIG";
+    throw configError;
+  }
+
+  try {
+    const response = await axios.get(BREVO_ACCOUNT_ENDPOINT, {
+      timeout: BREVO_TIMEOUT_MS,
+      headers: {
+        "api-key": BREVO_API_KEY,
+        Accept: "application/json"
+      }
+    });
+    return response.status >= 200 && response.status < 300;
+  } catch (err) {
+    throw buildProviderError(err, "Failed to verify Brevo mail configuration");
+  }
+}
+
+module.exports = {
+  sendMail,
+  verify,
+  __transportLabel: "brevo-http",
+  __provider: "brevo",
+  __endpoint: BREVO_ENDPOINT,
+  __senderEmail: BREVO_SENDER_EMAIL
 };
-
-module.exports = transporter;

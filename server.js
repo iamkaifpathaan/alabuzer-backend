@@ -46,46 +46,39 @@ const helmet = require("helmet");
 app.use(helmet());
 app.use(express.json());
 
-// ================= SMTP STARTUP CHECK =================
-// Log SMTP configuration and verify connectivity once at startup.
+// ================= MAILER STARTUP CHECK =================
+// Log Brevo configuration and verify connectivity once at startup.
 (async () => {
   try {
-    const hasSmtpConfig =
-      Boolean(process.env.SMTP_HOST) &&
-      Boolean(process.env.SMTP_USER) &&
-      Boolean(process.env.SMTP_PASS);
-    const hasGmailConfig = Boolean(process.env.EMAIL_USER) && Boolean(process.env.EMAIL_PASS);
-    const activeTransport =
-      transporter.__smtpHost === "smtp.gmail.com" ? "gmail" : "smtp";
+    const hasBrevoConfig =
+      Boolean(process.env.BREVO_API_KEY) && Boolean(process.env.BREVO_SENDER_EMAIL);
 
-    console.log("[mailer] active transport:", activeTransport);
+    console.log("[mailer] active transport:", transporter.__transportLabel);
+    console.log("[mailer] provider:", transporter.__provider);
+    console.log("[mailer] endpoint:", transporter.__endpoint);
     console.log("[mailer] transporter.__transportLabel:", transporter.__transportLabel);
-    console.log("[mailer] transporter.__smtpHost:", transporter.__smtpHost);
-    console.log("[mailer] transporter.__smtpPort:", transporter.__smtpPort);
-    console.log("[mailer] smtp env present:", {
-      smtpHostPresent: Boolean(process.env.SMTP_HOST),
-      smtpUserPresent: Boolean(process.env.SMTP_USER),
-      smtpPassPresent: Boolean(process.env.SMTP_PASS)
+    console.log("[mailer] brevo env present:", {
+      brevoApiKeyPresent: Boolean(process.env.BREVO_API_KEY),
+      brevoSenderEmailPresent: Boolean(process.env.BREVO_SENDER_EMAIL)
     });
 
-    if (!hasSmtpConfig && !hasGmailConfig) {
-      console.warn("[mailer] No email credentials configured; OTP emails will fail.");
+    if (!hasBrevoConfig) {
+      console.warn("[mailer] Brevo mailer is not configured; OTP emails will fail.");
       return;
     }
 
-    console.log("[mailer] verifying SMTP transport...");
+    console.log("[mailer] verifying Brevo transport...");
     await transporter.verify();
-    console.log("[mailer] SMTP connected:", {
-      host: transporter.__smtpHost,
-      port: transporter.__smtpPort
+    console.log("[mailer] Brevo connected:", {
+      endpoint: transporter.__endpoint,
+      sender: transporter.__senderEmail
     });
   } catch (err) {
-    console.error("[mailer] SMTP failed:", {
-      host: transporter.__smtpHost,
-      port: transporter.__smtpPort,
+    console.error("[mailer] Brevo failed:", {
+      endpoint: transporter.__endpoint,
       message: err?.message,
       code: err?.code,
-      command: err?.command,
+      status: err?.status,
       response: err?.response
     });
   }
@@ -464,7 +457,6 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req, res) => {
 
     try {
       await transporter.sendMail({
-        from: process.env.EMAIL_USER,
         to: newEmail,
         subject: "AL ABUZER - Verify Your New Email",
         html: `
@@ -618,7 +610,6 @@ app.post("/api/user/resend-email-change-otp", verifyToken, async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
       to: user.pendingEmail,
       subject: "AL ABUZER - Verify Your New Email",
       html: `
@@ -757,7 +748,6 @@ app.post("/api/auth/send-otp", async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
       to: sanitizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
@@ -960,7 +950,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
       to: email,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
@@ -1006,7 +995,6 @@ app.post("/api/auth/send-email-otp", verifyToken, async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
       to: user.email,
       subject: "AL ABUZER - Verify Your Email",
       html: `
@@ -1264,9 +1252,14 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
 
 app.get("/test-email", async (req, res) => {
   try {
+    const testRecipient = process.env.TEST_EMAIL_TO || process.env.BREVO_SENDER_EMAIL;
+
+    if (!testRecipient) {
+      return res.status(500).send("Set TEST_EMAIL_TO or BREVO_SENDER_EMAIL");
+    }
+
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
+      to: testRecipient,
       subject: "Test Email",
 
       text: "Email system working."
