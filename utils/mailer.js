@@ -61,4 +61,15 @@ transporter.__transportLabel = transportLabel;
 transporter.__smtpHost = SMTP_HOST || "smtp.gmail.com";
 transporter.__smtpPort = SMTP_PORT || 465;
 
+const originalSendMail = transporter.sendMail.bind(transporter);
+transporter.sendMail = (...args) => {
+  console.log("[mailer] sendMail transport:", {
+    activeTransport: transporter.__transportLabel,
+    transportLabel: transporter.__transportLabel,
+    host: transporter.__smtpHost,
+    port: transporter.__smtpPort
+  });
+  return originalSendMail(...args);
+};
+
 module.exports = transporter;

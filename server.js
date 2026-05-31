@@ -50,18 +50,26 @@ app.use(express.json());
 // Log SMTP configuration and verify connectivity once at startup.
 (async () => {
   try {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      console.warn(
-        "[mailer] EMAIL_USER/EMAIL_PASS not set; OTP emails will fail until configured."
-      );
-      return;
-    }
+    console.log("[mailer] startup transport:", {
+      activeTransport: transporter.__transportLabel,
+      transportLabel: transporter.__transportLabel,
+      host: transporter.__smtpHost,
+      port: transporter.__smtpPort,
+      smtpHostPresent: Boolean(process.env.SMTP_HOST),
+      smtpUserPresent: Boolean(process.env.SMTP_USER),
+      smtpPassPresent: Boolean(process.env.SMTP_PASS)
+    });
 
     console.log("[mailer] verifying SMTP transport...");
     await transporter.verify();
-    console.log("[mailer] SMTP transport verified and ready.");
+    console.log("[mailer] SMTP connected:", {
+      host: transporter.__smtpHost,
+      port: transporter.__smtpPort
+    });
   } catch (err) {
-    console.error("[mailer] SMTP verify failed:", {
+    console.error("[mailer] SMTP failed:", {
+      host: transporter.__smtpHost,
+      port: transporter.__smtpPort,
       message: err?.message,
       code: err?.code,
       command: err?.command,
