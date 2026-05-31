@@ -14,6 +14,13 @@ const transporter = require("./utils/mailer");
 const orderRoutes = require("./routes/orderRoutes");
 
 const app = express();
+
+// IMPORTANT:
+// The app runs behind Render's proxy. express-rate-limit will throw
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR unless trust proxy is enabled.
+// Using 1 trusts the first proxy hop (Render).
+app.set("trust proxy", 1);
+
 const rateLimit = require("express-rate-limit");
 
 // ================= EMAIL CHANGE CONSTANTS =================
@@ -23,7 +30,10 @@ const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 100
+  max: 100,
+  // With trust proxy enabled, this will correctly use X-Forwarded-For.
+  // Standard header used by proxies.
+  validate: { xForwardedForHeader: true }
 });
 
 app.use(limiter);
@@ -36,13 +46,38 @@ const helmet = require("helmet");
 app.use(helmet());
 app.use(express.json());
 
+// ================= SMTP STARTUP CHECK =================
+// Log SMTP configuration and verify connectivity once at startup.
+(async () => {
+  try {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.warn(
+        "[mailer] EMAIL_USER/EMAIL_PASS not set; OTP emails will fail until configured."
+      );
+      return;
+    }
+
+    console.log("[mailer] verifying SMTP transport...");
+    await transporter.verify();
+    console.log("[mailer] SMTP transport verified and ready.");
+  } catch (err) {
+    console.error("[mailer] SMTP verify failed:", {
+      message: err?.message,
+      code: err?.code,
+      command: err?.command,
+      response: err?.response
+    });
+  }
+})();
+
 // ================= DB CONNECT =================
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => {
     console.log("✅ MongoDB Connected");
     Product.collection.createIndex({ category: 1 });
   })
-  .catch(err => console.log(err));
+  .catch((err) => console.log(err));
 
 // ================= RAZORPAY INIT =================
 const razorpay = new Razorpay({
@@ -75,7 +110,6 @@ app.post("/api/products", verifyToken, verifyAdmin, async (req, res) => {
 
 app.post("/api/products/bulk", verifyToken, verifyAdmin, async (req, res) => {
   try {
-
     const products = req.body.products;
 
     if (!products || !products.length) {
@@ -91,7 +125,6 @@ app.post("/api/products/bulk", verifyToken, verifyAdmin, async (req, res) => {
       success: true,
       message: "Bulk upload successful"
     });
-
   } catch (err) {
     console.error("BULK ERROR:", err);
     res.status(500).json({
@@ -104,7 +137,6 @@ app.post("/api/products/bulk", verifyToken, verifyAdmin, async (req, res) => {
 // Get All Products
 app.get("/api/products", async (req, res) => {
   try {
-
     const { category } = req.query;
 
     let filter = {};
@@ -113,14 +145,14 @@ app.get("/api/products", async (req, res) => {
       filter.category = category;
     }
 
-    const products = await Product.find(filter).select("-__v")
+    const products = await Product.find(filter)
+      .select("-__v")
       .sort({ createdAt: -1 });
 
     res.json({
       success: true,
       data: products
     });
-
   } catch (err) {
     res.status(500).json({
       success: false,
@@ -131,39 +163,35 @@ app.get("/api/products", async (req, res) => {
 
 // Get Single Product by Slug
 app.get("/api/products/:slug", async (req, res) => {
-  try{
-
+  try {
     const product = await Product.findOne({ slug: req.params.slug }).select("-__v");
 
-    if(!product){
+    if (!product) {
       return res.status(404).json({
-        success:false,
-        message:"Product not found"
+        success: false,
+        message: "Product not found"
       });
     }
 
     res.json({
-      success:true,
+      success: true,
       data: product
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
 // Update Product
 app.put("/api/products/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+      new: true
+    });
     res.json({ success: true, product });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -184,110 +212,102 @@ app.delete("/api/products/:id", verifyToken, verifyAdmin, async (req, res) => {
 
 // Signup
 const bcrypt = require("bcrypt");
-app.post("/api/auth/login", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/login", async (req, res) => {
+  try {
     const { email, password } = req.body;
 
     // email validation
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if(!emailPattern.test(email)){
+    if (!emailPattern.test(email)) {
       return res.json({
-        success:false,
-        message:"Invalid email"
+        success: false,
+        message: "Invalid email"
       });
     }
 
     const user = await User.findOne({ email });
 
-    if(!user || !user.password){
+    if (!user || !user.password) {
       return res.json({
-        success:false,
-        message:"User not found"
+        success: false,
+        message: "User not found"
       });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
 
-    if(!isMatch){
+    if (!isMatch) {
       return res.json({
-        success:false,
-        message:"Wrong password"
+        success: false,
+        message: "Wrong password"
       });
     }
 
-    const token = jwt.sign(
-      { id:user._id, role:user.role },
-      process.env.JWT_SECRET,
-      { expiresIn:"7d" }
-    );
-
-    res.json({
-      success:true,
-      token,
-      user:{
-        _id:user._id,
-        name:user.name,
-        email:user.email,
-        emailVerified:user.emailVerified,
-        role:user.role
-      }
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+      expiresIn: "7d"
     });
 
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({
+      success: true,
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/signup", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/signup", async (req, res) => {
+  try {
     const { name, email, password, confirmPassword } = req.body;
 
     // validations
-    if(!name || !email || !password){
+    if (!name || !email || !password) {
       return res.json({
-        success:false,
-        message:"All fields required"
+        success: false,
+        message: "All fields required"
       });
     }
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if(!emailPattern.test(email)){
+    if (!emailPattern.test(email)) {
       return res.json({
-        success:false,
-        message:"Invalid email"
+        success: false,
+        message: "Invalid email"
       });
     }
 
-    if(password.length < 8){
+    if (password.length < 8) {
       return res.json({
-        success:false,
-        message:"Password must be at least 8 characters"
+        success: false,
+        message: "Password must be at least 8 characters"
       });
     }
 
-    if(confirmPassword !== undefined && password !== confirmPassword){
+    if (confirmPassword !== undefined && password !== confirmPassword) {
       return res.json({
-        success:false,
-        message:"Passwords do not match"
+        success: false,
+        message: "Passwords do not match"
       });
     }
 
     // check existing user
     const existing = await User.findOne({ email });
 
-    if(existing){
+    if (existing) {
       return res.json({
-        success:false,
-        message:"Email already registered"
+        success: false,
+        message: "Email already registered"
       });
     }
 
@@ -302,127 +322,120 @@ app.post("/api/auth/signup", async (req,res)=>{
 
     await user.save();
 
-    const token = jwt.sign(
-      { id:user._id, role:user.role },
-      process.env.JWT_SECRET,
-      { expiresIn:"7d" }
-    );
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+      expiresIn: "7d"
+    });
 
     res.json({
-      success:true,
+      success: true,
       token,
-      user:{
-        _id:user._id,
-        name:user.name,
-        email:user.email,
-        emailVerified:user.emailVerified,
-        role:user.role
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role
       }
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.put("/api/user/update", verifyToken, async (req,res)=>{
-
-  try{
-
+app.put("/api/user/update", verifyToken, async (req, res) => {
+  try {
     const { name } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      { name },
-      { new:true }
-    );
+    const user = await User.findByIdAndUpdate(req.user.id, { name }, { new: true });
 
     res.json({
-      success:true,
-      user:{
-  _id:user._id,
-  name:user.name,
-  email:user.email,
-  emailVerified:user.emailVerified,
-  role:user.role
-}
+      success: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role
+      }
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
 // ================================
 // 📧 INITIATE EMAIL CHANGE (send OTP to new email)
 // ================================
 
-app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
+app.post("/api/user/initiate-email-change", verifyToken, async (req, res) => {
+  try {
+    const newEmail =
+      typeof req.body.newEmail === "string" ? req.body.newEmail.trim().toLowerCase() : "";
 
-  try{
-
-    const newEmail = typeof req.body.newEmail === "string" ? req.body.newEmail.trim().toLowerCase() : "";
-
-    if(!newEmail){
-      return res.json({ success:false, message:"New email required" });
+    if (!newEmail) {
+      return res.json({ success: false, message: "New email required" });
     }
 
-    if(newEmail.length > 254){
-      return res.json({ success:false, message:"Invalid email" });
+    if (newEmail.length > 254) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
-    if(!EMAIL_PATTERN.test(newEmail)){
-      return res.json({ success:false, message:"Invalid email" });
+    if (!EMAIL_PATTERN.test(newEmail)) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const user = await User.findById(req.user.id);
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(user.email && user.email.toLowerCase() === newEmail){
-      return res.json({ success:false, message:"New email must be different from current email" });
+    if (user.email && user.email.toLowerCase() === newEmail) {
+      return res.json({
+        success: false,
+        message: "New email must be different from current email"
+      });
     }
 
     const existing = await User.findOne({ email: newEmail, _id: { $ne: req.user.id } });
-    if(existing){
-      return res.json({ success:false, message:"Email already in use by another account" });
+    if (existing) {
+      return res.json({ success: false, message: "Email already in use by another account" });
     }
 
     // Rate limit: allow at most 5 resends per pending change, and enforce 60s cooldown
-    if(
+    if (
       user.pendingEmail === newEmail &&
       user.pendingEmailOtpLastSent &&
       Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
-    ){
-      return res.json({ success:false, message:"Please wait before requesting another OTP" });
+    ) {
+      return res.json({ success: false, message: "Please wait before requesting another OTP" });
     }
 
     // Reset count if initiating a new email (different from current pending)
-    if(user.pendingEmail !== newEmail){
+    if (user.pendingEmail !== newEmail) {
       user.pendingEmailOtpResendCount = 0;
     }
 
-    if(user.pendingEmailOtpResendCount >= EMAIL_CHANGE_RESEND_LIMIT){
-      return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
+    if (user.pendingEmailOtpResendCount >= EMAIL_CHANGE_RESEND_LIMIT) {
+      return res.json({
+        success: false,
+        message: "Too many OTP requests. Please try again later."
+      });
     }
 
     const otp = crypto.randomInt(100000, 1000000).toString();
 
     user.pendingEmail = newEmail;
     user.pendingEmailOtp = otp;
-    user.pendingEmailOtpExpire = new Date(Date.now() + 10*60*1000);
+    user.pendingEmailOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
     user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
     user.pendingEmailOtpLastSent = new Date();
 
@@ -446,7 +459,7 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
           </div>
         `
       });
-    } catch(mailErr) {
+    } catch (mailErr) {
       console.error("MAIL ERROR:", mailErr);
       user.pendingEmail = undefined;
       user.pendingEmailOtp = undefined;
@@ -454,63 +467,62 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req,res)=>{
       user.pendingEmailOtpResendCount = Math.max(0, user.pendingEmailOtpResendCount - 1);
       user.pendingEmailOtpLastSent = undefined;
       await user.save();
-      return res.status(500).json({ success:false, message:"Failed to send OTP email. Please try again." });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send OTP email. Please try again."
+      });
     }
 
-    res.json({ success:true, message:"OTP sent to new email" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP sent to new email" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
 // ================================
 // ✅ VERIFY EMAIL CHANGE OTP
 // ================================
 
-app.post("/api/user/verify-email-change", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/user/verify-email-change", verifyToken, async (req, res) => {
+  try {
     const { otp } = req.body;
 
-    if(!otp){
-      return res.json({ success:false, message:"OTP required" });
+    if (!otp) {
+      return res.json({ success: false, message: "OTP required" });
     }
 
     const user = await User.findById(req.user.id);
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(!user.pendingEmail){
-      return res.json({ success:false, message:"No pending email change found" });
+    if (!user.pendingEmail) {
+      return res.json({ success: false, message: "No pending email change found" });
     }
 
-    if(!user.pendingEmailOtp || user.pendingEmailOtp !== String(otp)){
-      return res.json({ success:false, message:"Invalid OTP" });
+    if (!user.pendingEmailOtp || user.pendingEmailOtp !== String(otp)) {
+      return res.json({ success: false, message: "Invalid OTP" });
     }
 
-    if(!user.pendingEmailOtpExpire || Date.now() > user.pendingEmailOtpExpire.getTime()){
-      return res.json({ success:false, message:"OTP expired" });
+    if (!user.pendingEmailOtpExpire || Date.now() > user.pendingEmailOtpExpire.getTime()) {
+      return res.json({ success: false, message: "OTP expired" });
     }
 
     // Double-check the pending email is still not taken by another account
     const conflict = await User.findOne({ email: user.pendingEmail, _id: { $ne: user._id } });
-    if(conflict){
+    if (conflict) {
       user.pendingEmail = undefined;
       user.pendingEmailOtp = undefined;
       user.pendingEmailOtpExpire = undefined;
       user.pendingEmailOtpResendCount = 0;
       user.pendingEmailOtpLastSent = undefined;
       await user.save();
-      return res.json({ success:false, message:"Email already in use by another account" });
+      return res.json({ success: false, message: "Email already in use by another account" });
     }
 
     const newEmail = user.pendingEmail;
@@ -526,60 +538,59 @@ app.post("/api/user/verify-email-change", verifyToken, async (req,res)=>{
     await user.save();
 
     res.json({
-      success:true,
-      message:"Email updated successfully",
-      user:{
-        _id:user._id,
-        name:user.name,
-        email:user.email,
-        emailVerified:user.emailVerified,
-        role:user.role
+      success: true,
+      message: "Email updated successfully",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role
       }
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
 // ================================
 // 🔁 RESEND EMAIL CHANGE OTP
 // ================================
 
-app.post("/api/user/resend-email-change-otp", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/user/resend-email-change-otp", verifyToken, async (req, res) => {
+  try {
     const user = await User.findById(req.user.id);
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(!user.pendingEmail){
-      return res.json({ success:false, message:"No pending email change found" });
+    if (!user.pendingEmail) {
+      return res.json({ success: false, message: "No pending email change found" });
     }
 
-    if(
+    if (
       user.pendingEmailOtpLastSent &&
       Date.now() - user.pendingEmailOtpLastSent.getTime() < EMAIL_CHANGE_COOLDOWN_MS
-    ){
-      return res.json({ success:false, message:"Please wait before requesting another OTP" });
+    ) {
+      return res.json({ success: false, message: "Please wait before requesting another OTP" });
     }
 
-    if((user.pendingEmailOtpResendCount || 0) >= EMAIL_CHANGE_RESEND_LIMIT){
-      return res.json({ success:false, message:"Too many OTP requests. Please try again later." });
+    if ((user.pendingEmailOtpResendCount || 0) >= EMAIL_CHANGE_RESEND_LIMIT) {
+      return res.json({
+        success: false,
+        message: "Too many OTP requests. Please try again later."
+      });
     }
 
     const otp = crypto.randomInt(100000, 1000000).toString();
 
     user.pendingEmailOtp = otp;
-    user.pendingEmailOtpExpire = new Date(Date.now() + 10*60*1000);
+    user.pendingEmailOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
     user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
     user.pendingEmailOtpLastSent = new Date();
 
@@ -603,41 +614,37 @@ app.post("/api/user/resend-email-change-otp", verifyToken, async (req,res)=>{
       `
     });
 
-    res.json({ success:true, message:"OTP resent to new email" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP resent to new email" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
+  try {
     const { phone } = req.body;
 
     const user = await User.findById(req.user.id);
 
-    if(user.phoneVerified){
-    return res.json({
-    success:true,
-    message:"Already verified"
-    });
-    }  
-    
-    if(!/^[6-9]\d{9}$/.test(phone)){
-      return res.json({ success:false, message:"Invalid phone" });
-    }    
+    if (user.phoneVerified) {
+      return res.json({
+        success: true,
+        message: "Already verified"
+      });
+    }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      return res.json({ success: false, message: "Invalid phone" });
+    }
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
 
     user.otp = otp;
-    user.otpExpire = Date.now() + 5*60*1000;
+    user.otpExpire = Date.now() + 5 * 60 * 1000;
 
     await user.save();
 
@@ -651,87 +658,79 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req,res)=>{
       }
     });
 
-    res.json({ success:true });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/verify-phone-otp", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
+  try {
     const { phone, otp } = req.body;
 
     const user = await User.findById(req.user.id);
 
-    if(!user.otp || user.otp != otp){
-      return res.json({ success:false, message:"Invalid OTP" });
+    if (!user.otp || user.otp != otp) {
+      return res.json({ success: false, message: "Invalid OTP" });
     }
 
-    if(Date.now() > user.otpExpire){
-      return res.json({ success:false, message:"OTP expired" });
+    if (Date.now() > user.otpExpire) {
+      return res.json({ success: false, message: "OTP expired" });
     }
 
-    if(!phone || !/^[6-9]\d{9}$/.test(phone)){
-      return res.json({ success:false, message:"Invalid phone number" });
+    if (!phone || !/^[6-9]\d{9}$/.test(phone)) {
+      return res.json({ success: false, message: "Invalid phone number" });
     }
 
     user.phone = phone;
-    user.phoneVerified = true; 
+    user.phoneVerified = true;
     user.otp = null;
     user.otpExpire = null;
 
     await user.save();
 
-    res.json({ success:true });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/send-otp", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/send-otp", async (req, res) => {
+  try {
     const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
 
-    if(!email){
-      return res.json({ success:false, message:"Email required" });
+    if (!email) {
+      return res.json({ success: false, message: "Email required" });
     }
 
-    if(email.length > 254){
-      return res.json({ success:false, message:"Invalid email" });
+    if (email.length > 254) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if(!emailPattern.test(email)){
-      return res.json({ success:false, message:"Invalid email" });
+    if (!emailPattern.test(email)) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const sanitizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: sanitizedEmail });
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
 
     user.resetOtp = otp;
-    user.resetOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtpExpire = Date.now() + 10 * 60 * 1000;
     user.resetOtpVerified = false;
 
     await user.save();
@@ -753,149 +752,141 @@ app.post("/api/auth/send-otp", async (req,res)=>{
       `
     });
 
-    res.json({ success:true, message:"OTP sent to email" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP sent to email" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/verify-otp", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/verify-otp", async (req, res) => {
+  try {
     const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
     const { otp } = req.body;
 
-    if(!email || !otp){
-      return res.json({ success:false, message:"Email and OTP required" });
+    if (!email || !otp) {
+      return res.json({ success: false, message: "Email and OTP required" });
     }
 
-    if(email.length > 254){
-      return res.json({ success:false, message:"Invalid email" });
+    if (email.length > 254) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if(!emailPattern.test(email)){
-      return res.json({ success:false, message:"Invalid email" });
+    if (!emailPattern.test(email)) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const sanitizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: sanitizedEmail });
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(!user.resetOtp || user.resetOtp !== otp){
-      return res.json({ success:false, message:"Invalid OTP" });
+    if (!user.resetOtp || user.resetOtp !== otp) {
+      return res.json({ success: false, message: "Invalid OTP" });
     }
 
-    if(Date.now() > user.resetOtpExpire){
-      return res.json({ success:false, message:"OTP expired" });
+    if (Date.now() > user.resetOtpExpire) {
+      return res.json({ success: false, message: "OTP expired" });
     }
 
     user.resetOtpVerified = true;
     user.resetOtp = null;
-    user.resetOtpExpire = new Date(Date.now() + 10*60*1000);
+    user.resetOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
     await user.save();
 
-    res.json({ success:true, message:"OTP verified" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP verified" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/reset-password", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
     // Accept both 'password' and 'newPassword' field names from frontend
     const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
     const password = req.body.password || req.body.newPassword;
     // Accept both 'confirmPassword' and 'confirm_password' field names
     const confirmPassword = req.body.confirmPassword || req.body.confirm_password;
 
-    if(!email){
+    if (!email) {
       return res.status(400).json({
-        success:false,
-        message:"Email is required"
+        success: false,
+        message: "Email is required"
       });
     }
 
-    if(!password){
+    if (!password) {
       return res.status(400).json({
-        success:false,
-        message:"New password is required"
+        success: false,
+        message: "New password is required"
       });
     }
 
     // email validation
-    if(email.length > 254){
+    if (email.length > 254) {
       return res.status(400).json({
-        success:false,
-        message:"Invalid email"
+        success: false,
+        message: "Invalid email"
       });
     }
 
     const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if(!emailPattern.test(email)){
+    if (!emailPattern.test(email)) {
       return res.status(400).json({
-        success:false,
-        message:"Invalid email"
+        success: false,
+        message: "Invalid email"
       });
     }
 
-    if(password.length < 8){
+    if (password.length < 8) {
       return res.status(400).json({
-        success:false,
-        message:"Password must be at least 8 characters"
+        success: false,
+        message: "Password must be at least 8 characters"
       });
     }
 
-    if(confirmPassword !== undefined && password !== confirmPassword){
+    if (confirmPassword !== undefined && password !== confirmPassword) {
       return res.status(400).json({
-        success:false,
-        message:"Passwords do not match"
+        success: false,
+        message: "Passwords do not match"
       });
     }
 
     const sanitizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: sanitizedEmail });
 
-    if(!user){
+    if (!user) {
       return res.status(404).json({
-        success:false,
-        message:"User not found"
+        success: false,
+        message: "User not found"
       });
     }
 
     // Check that OTP was verified via /verify-otp before allowing reset
-    if(!user.resetOtpVerified){
+    if (!user.resetOtpVerified) {
       return res.status(400).json({
-        success:false,
-        message:"Please verify your OTP before resetting password"
+        success: false,
+        message: "Please verify your OTP before resetting password"
       });
     }
 
-    if(Date.now() > user.resetOtpExpire){
+    if (Date.now() > user.resetOtpExpire) {
       user.resetOtpVerified = false;
       user.resetOtpExpire = null;
       await user.save();
       return res.status(400).json({
-        success:false,
-        message:"Reset session expired. Please request a new OTP."
+        success: false,
+        message: "Reset session expired. Please request a new OTP."
       });
     }
 
@@ -908,45 +899,41 @@ app.post("/api/auth/reset-password", async (req,res)=>{
     await user.save();
 
     res.json({
-      success:true,
-      message:"Password updated"
+      success: true,
+      message: "Password updated"
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/forgot-password", async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
     const { email } = req.body;
 
-    if(!email){
-      return res.json({ success:false, message:"Email required" });
+    if (!email) {
+      return res.json({ success: false, message: "Email required" });
     }
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if(!emailPattern.test(email)){
-      return res.json({ success:false, message:"Invalid email" });
+    if (!emailPattern.test(email)) {
+      return res.json({ success: false, message: "Invalid email" });
     }
 
     const user = await User.findOne({ email });
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
 
     user.resetOtp = otp;
-    user.resetOtpExpire = Date.now() + 10*60*1000;
+    user.resetOtpExpire = Date.now() + 10 * 60 * 1000;
     user.resetOtpVerified = false;
 
     await user.save();
@@ -968,36 +955,32 @@ app.post("/api/auth/forgot-password", async (req,res)=>{
       `
     });
 
-    res.json({ success:true, message:"OTP sent to email" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP sent to email" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/send-email-otp", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/send-email-otp", verifyToken, async (req, res) => {
+  try {
     const user = await User.findById(req.user.id);
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(user.emailVerified){
-      return res.json({ success:true, message:"Email already verified" });
+    if (user.emailVerified) {
+      return res.json({ success: true, message: "Email already verified" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random()*900000));
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
 
     user.emailOtp = otp;
-    user.emailOtpExpire = Date.now() + 10*60*1000;
+    user.emailOtpExpire = Date.now() + 10 * 60 * 1000;
 
     await user.save();
 
@@ -1018,44 +1001,40 @@ app.post("/api/auth/send-email-otp", verifyToken, async (req,res)=>{
       `
     });
 
-    res.json({ success:true, message:"OTP sent to email" });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+    res.json({ success: true, message: "OTP sent to email" });
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
-app.post("/api/auth/verify-email-otp", verifyToken, async (req,res)=>{
-
-  try{
-
+app.post("/api/auth/verify-email-otp", verifyToken, async (req, res) => {
+  try {
     const { otp } = req.body;
 
-    if(!otp){
-      return res.json({ success:false, message:"OTP required" });
+    if (!otp) {
+      return res.json({ success: false, message: "OTP required" });
     }
 
     const user = await User.findById(req.user.id);
 
-    if(!user){
-      return res.json({ success:false, message:"User not found" });
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
     }
 
-    if(user.emailVerified){
-      return res.json({ success:true, message:"Email already verified" });
+    if (user.emailVerified) {
+      return res.json({ success: true, message: "Email already verified" });
     }
 
-    if(!user.emailOtp || user.emailOtp !== otp){
-      return res.json({ success:false, message:"Invalid OTP" });
+    if (!user.emailOtp || user.emailOtp !== otp) {
+      return res.json({ success: false, message: "Invalid OTP" });
     }
 
-    if(Date.now() > user.emailOtpExpire){
-      return res.json({ success:false, message:"OTP expired" });
+    if (Date.now() > user.emailOtpExpire) {
+      return res.json({ success: false, message: "OTP expired" });
     }
 
     user.emailVerified = true;
@@ -1065,25 +1044,23 @@ app.post("/api/auth/verify-email-otp", verifyToken, async (req,res)=>{
     await user.save();
 
     res.json({
-      success:true,
-      message:"Email verified successfully",
-      user:{
-        _id:user._id,
-        name:user.name,
-        email:user.email,
-        emailVerified:user.emailVerified,
-        role:user.role
+      success: true,
+      message: "Email verified successfully",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        role: user.role
       }
     });
-
-  }catch(err){
-  console.error("ERROR:", err);
-  res.status(500).json({ 
-    success:false,
-    message: err.message
-  });
-}
-
+  } catch (err) {
+    console.error("ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
 });
 
 // ================================
@@ -1091,52 +1068,48 @@ app.post("/api/auth/verify-email-otp", verifyToken, async (req,res)=>{
 // ================================
 
 app.post("/api/payment/create-order", verifyToken, async (req, res) => {
-
-  try{
-
+  try {
     const user = await User.findById(req.user.id);
 
-    if(!user.phoneVerified){
+    if (!user.phoneVerified) {
       return res.status(401).json({
-        success:false,
-        requirePhone:true,
-        message:"Phone verification required"
+        success: false,
+        requirePhone: true,
+        message: "Phone verification required"
       });
     }
 
     const { items } = req.body;
 
-    if(!items || !items.length){
+    if (!items || !items.length) {
       return res.status(400).json({
-        success:false,
-        message:"No items"
+        success: false,
+        message: "No items"
       });
     }
 
     let total = 0;
 
-    for(const item of items){
-
-        if(!item.slug || !item.qty || item.qty <= 0 || item.qty > 10){
+    for (const item of items) {
+      if (!item.slug || !item.qty || item.qty <= 0 || item.qty > 10) {
         return res.status(400).json({
-        success:false,
-        message:"Invalid cart item"
-      });
-     }
+          success: false,
+          message: "Invalid cart item"
+        });
+      }
 
-      const product = await Product.findOne({ slug:item.slug });
+      const product = await Product.findOne({ slug: item.slug });
 
-      if(!product){
+      if (!product) {
         return res.status(400).json({
-          success:false,
-          message:"Product not found"
+          success: false,
+          message: "Product not found"
         });
       }
 
       const price = product.discountPrice || product.price;
 
       total += price * item.qty;
-
     }
 
     const options = {
@@ -1148,23 +1121,19 @@ app.post("/api/payment/create-order", verifyToken, async (req, res) => {
     const order = await razorpay.orders.create(options);
 
     res.json({
-      success:true,
-      orderId:order.id,
-      amount:order.amount,
-      key:process.env.RAZORPAY_KEY_ID
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      key: process.env.RAZORPAY_KEY_ID
     });
-
-  }catch(err){
-
+  } catch (err) {
     console.error("RAZORPAY ERROR:", err);
 
     res.status(500).json({
-      success:false,
-      message:"Payment order failed"
+      success: false,
+      message: "Payment order failed"
     });
-
   }
-
 });
 
 // ================================
@@ -1172,9 +1141,7 @@ app.post("/api/payment/create-order", verifyToken, async (req, res) => {
 // ================================
 
 app.post("/api/payment/verify", verifyToken, async (req, res) => {
-
   try {
-
     const {
       razorpay_order_id,
       razorpay_payment_id,
@@ -1187,28 +1154,24 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
 
     // ================= STOCK VALIDATION =================
 
-    for(const item of items){
+    for (const item of items) {
+      const product = await Product.findOne({ slug: item.slug });
 
-      const product = await Product.findOne({ slug:item.slug });
-
-      if(!product){
+      if (!product) {
         return res.status(400).json({
-          success:false,
-          message:"Product not found"
+          success: false,
+          message: "Product not found"
         });
       }
 
-      if(product.trackStock && !product.allowBackorder){
-
-        if(product.stock < item.qty){
+      if (product.trackStock && !product.allowBackorder) {
+        if (product.stock < item.qty) {
           return res.status(400).json({
-            success:false,
-            message:`${product.name} is out of stock`
+            success: false,
+            message: `${product.name} is out of stock`
           });
         }
-
       }
-
     }
 
     // ================= SIGNATURE VERIFY =================
@@ -1220,97 +1183,79 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
       .update(body.toString())
       .digest("hex");
 
-    if(expectedSignature !== razorpay_signature){
+    if (expectedSignature !== razorpay_signature) {
       return res.status(400).json({
-        success:false,
-        message:"Payment verification failed"
+        success: false,
+        message: "Payment verification failed"
       });
     }
 
     // ================= SAVE ORDER =================
 
-const enrichedItems = [];
+    const enrichedItems = [];
 
-for(const item of items){
+    for (const item of items) {
+      const product = await Product.findOne({ slug: item.slug });
 
-  const product = await Product.findOne({ slug:item.slug });
+      enrichedItems.push({
+        slug: item.slug,
+        name: product.name,
+        price: product.price,
+        image: product.images?.[0],
+        qty: item.qty
+      });
+    }
 
-  enrichedItems.push({
-    slug: item.slug,
-    name: product.name,
-    price: product.price,
-    image: product.images?.[0],
-    qty: item.qty
-  });
-
-}
-
-const order = new Order({
-  userId,
-  items: enrichedItems,
-  shippingAddress,
-  paymentMethod:"Razorpay"
-});
+    const order = new Order({
+      userId,
+      items: enrichedItems,
+      shippingAddress,
+      paymentMethod: "Razorpay"
+    });
 
     await order.save();
 
     // ================= REDUCE STOCK =================
 
-    for(const item of items){
+    for (const item of items) {
+      const product = await Product.findOne({ slug: item.slug });
 
-      const product = await Product.findOne({ slug:item.slug });
-
-      if(product && product.trackStock){
-
+      if (product && product.trackStock) {
         product.stock = Math.max(0, product.stock - item.qty);
 
         await product.save();
-
       }
-
     }
 
     res.json({
-      success:true,
-      message:"Payment verified and order saved"
+      success: true,
+      message: "Payment verified and order saved"
     });
-
-  } catch(err){
-
+  } catch (err) {
     console.error("VERIFY ERROR:", err);
 
     res.status(500).json({
-      success:false,
-      message:"Verification failed"
+      success: false,
+      message: "Verification failed"
+    });
+  }
+});
+
+app.get("/test-email", async (req, res) => {
+  try {
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER,
+      subject: "Test Email",
+
+      text: "Email system working."
     });
 
+    res.send("Email sent successfully");
+  } catch (err) {
+    console.log(err);
+    res.send("Email failed");
   }
-
-});
-
-app.get("/test-email", async (req,res)=>{
-
-try{
-
-await transporter.sendMail({
-
-from:process.env.EMAIL_USER,
-to:process.env.EMAIL_USER,
-subject:"Test Email",
-
-text:"Email system working."
-
-});
-
-res.send("Email sent successfully");
-
-}catch(err){
-
-console.log(err);
-res.send("Email failed");
-
-}
-
 });
 
 // ================= GLOBAL ERROR HANDLER =================
