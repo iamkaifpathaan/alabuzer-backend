@@ -50,15 +50,28 @@ app.use(express.json());
 // Log SMTP configuration and verify connectivity once at startup.
 (async () => {
   try {
-    console.log("[mailer] startup transport:", {
-      activeTransport: transporter.__transportLabel,
-      transportLabel: transporter.__transportLabel,
-      host: transporter.__smtpHost,
-      port: transporter.__smtpPort,
+    const hasSmtpConfig =
+      Boolean(process.env.SMTP_HOST) &&
+      Boolean(process.env.SMTP_USER) &&
+      Boolean(process.env.SMTP_PASS);
+    const hasGmailConfig = Boolean(process.env.EMAIL_USER) && Boolean(process.env.EMAIL_PASS);
+    const activeTransport =
+      transporter.__smtpHost === "smtp.gmail.com" ? "gmail" : "smtp";
+
+    console.log("[mailer] active transport:", activeTransport);
+    console.log("[mailer] transporter.__transportLabel:", transporter.__transportLabel);
+    console.log("[mailer] transporter.__smtpHost:", transporter.__smtpHost);
+    console.log("[mailer] transporter.__smtpPort:", transporter.__smtpPort);
+    console.log("[mailer] smtp env present:", {
       smtpHostPresent: Boolean(process.env.SMTP_HOST),
       smtpUserPresent: Boolean(process.env.SMTP_USER),
       smtpPassPresent: Boolean(process.env.SMTP_PASS)
     });
+
+    if (!hasSmtpConfig && !hasGmailConfig) {
+      console.warn("[mailer] No email credentials configured; OTP emails will fail.");
+      return;
+    }
 
     console.log("[mailer] verifying SMTP transport...");
     await transporter.verify();
