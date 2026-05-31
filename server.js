@@ -56,11 +56,6 @@ app.use(express.json());
     console.log("[mailer] active transport:", transporter.__transportLabel);
     console.log("[mailer] provider:", transporter.__provider);
     console.log("[mailer] endpoint:", transporter.__endpoint);
-    console.log("[mailer] transporter.__transportLabel:", transporter.__transportLabel);
-    console.log("[mailer] brevo env present:", {
-      brevoApiKeyPresent: Boolean(process.env.BREVO_API_KEY),
-      brevoSenderEmailPresent: Boolean(process.env.BREVO_SENDER_EMAIL)
-    });
 
     if (!hasBrevoConfig) {
       console.warn("[mailer] Brevo mailer is not configured; OTP emails will fail.");
@@ -1252,17 +1247,17 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
 
 app.get("/test-email", async (req, res) => {
   try {
-    const testRecipient = process.env.TEST_EMAIL_TO || process.env.BREVO_SENDER_EMAIL;
+    const testRecipient = process.env.TEST_EMAIL_TO;
 
     if (!testRecipient) {
-      return res.status(500).send("Set TEST_EMAIL_TO or BREVO_SENDER_EMAIL");
+      return res.status(500).send("Set TEST_EMAIL_TO");
     }
 
     await transporter.sendMail({
       to: testRecipient,
       subject: "Test Email",
-
-      text: "Email system working."
+      text: "Email system working.",
+      html: "<p>Email system working.</p>"
     });
 
     res.send("Email sent successfully");

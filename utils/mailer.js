@@ -7,8 +7,9 @@ function toInt(value, defaultValue) {
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL;
-const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || "AL ABUZER PERFUMES";
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME;
 const BREVO_TIMEOUT_MS = toInt(process.env.BREVO_TIMEOUT_MS, 10_000);
+const RETRY_BASE_DELAY_MS = toInt(process.env.BREVO_RETRY_BASE_DELAY_MS, 300);
 const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
 const BREVO_ACCOUNT_ENDPOINT = "https://api.brevo.com/v3/account";
 
@@ -85,17 +86,18 @@ async function sendMail(options = {}) {
 
   const payload = {
     sender: {
-      email: BREVO_SENDER_EMAIL,
-      name: BREVO_SENDER_NAME
+      email: BREVO_SENDER_EMAIL
     },
     to: recipients,
     subject: options.subject,
     htmlContent: options.html,
     textContent: options.text
   };
+  if (BREVO_SENDER_NAME) payload.sender.name = BREVO_SENDER_NAME;
 
   const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+  let lastError;
+  for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber += 1) {
     try {
       const response = await axios.post(BREVO_ENDPOINT, payload, {
         timeout: BREVO_TIMEOUT_MS,
@@ -117,15 +119,17 @@ async function sendMail(options = {}) {
         provider: "brevo"
       };
     } catch (err) {
-      if (attempt < maxAttempts && isTransientError(err)) {
-        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+      lastError = err;
+      if (attemptNumber < maxAttempts && isTransientError(err)) {
+        const delayMs = Math.pow(2, attemptNumber - 1) * RETRY_BASE_DELAY_MS;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }
-      throw buildProviderError(err, "Failed to send email via Brevo");
+      break;
     }
   }
 
-  throw new Error("Brevo send failed");
+  throw buildProviderError(lastError, "Failed to send email via Brevo");
 }
 
 async function verify() {
