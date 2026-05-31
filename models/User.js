@@ -4,10 +4,24 @@ const userSchema = new mongoose.Schema({
 
   name: String,
 
-  // Phone is NOT part of the account/auth system.
-  // It is used only during checkout and belongs to the Order (shippingAddress.phone).
-  // Therefore we must NOT enforce uniqueness or store it on the User.
-  // (Kept out entirely to prevent E11000 dup key errors on phone:null.)
+  // Phase 1 (index fix only): phone fields stay for now because checkout flows
+  // currently rely on user.phoneVerified and user.phone.
+  // IMPORTANT: phone must NOT be unique across users.
+  phone: {
+    type: String,
+    // no unique index here (phone can be shared across users)
+    // keep sparse so missing phones are not indexed if an index exists in DB
+    sparse: true,
+    set: function(v) {
+      if (v === null || v === undefined || v === '') return undefined;
+      return v;
+    }
+  },
+
+  phoneVerified: {
+    type: Boolean,
+    default: false
+  },
 
   email: {
     type: String,
@@ -41,11 +55,23 @@ const userSchema = new mongoose.Schema({
     default: false
   },
 
+  otp: String,
+  otpExpire: Date,
+
   role: {
     type: String,
     default: "user"
   }
 
 }, { timestamps: true });
+
+// Prevent persisting phone as null/"" which can still be indexed and cause
+// dup-key errors if any leftover unique index exists in the DB.
+userSchema.pre('save', function() {
+  if (!this.phone) {
+    this.phone = undefined;
+    this.unmarkModified('phone');
+  }
+});
 
 module.exports = mongoose.model("User", userSchema);
