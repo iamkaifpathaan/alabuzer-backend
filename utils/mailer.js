@@ -1,7 +1,10 @@
 const nodemailer = require("nodemailer");
 
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = process.env.SMTP_SECURE === "true";
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
 const EMAIL_FROM_NAME = process.env.EMAIL_FROM_NAME || "AL ABUZER PERFUMES";
 
 function toAddressString(to) {
@@ -27,18 +30,20 @@ function toAddressString(to) {
 }
 
 let transporter =
-  EMAIL_USER && EMAIL_PASS
+  SMTP_HOST && SMTP_USER && SMTP_PASS
     ? nodemailer.createTransport({
-        service: "gmail",
+        host: SMTP_HOST,
+        port: SMTP_PORT,
+        secure: SMTP_SECURE,
         auth: {
-          user: EMAIL_USER,
-          pass: EMAIL_PASS
+          user: SMTP_USER,
+          pass: SMTP_PASS
         }
       })
     : null;
 
 function getTransporter() {
-  if (!EMAIL_USER || !EMAIL_PASS) {
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
     const configError = new Error("Gmail mailer is not configured");
     configError.code = "MAILER_CONFIG";
     throw configError;
@@ -68,7 +73,7 @@ async function sendMail(options = {}) {
   }
 
   const info = await getTransporter().sendMail({
-    from: `"${EMAIL_FROM_NAME}" <${EMAIL_USER}>`,
+    from: `"${EMAIL_FROM_NAME}" <${SMTP_USER}>`,
     to,
     subject: options.subject,
     html: options.html,
@@ -76,8 +81,8 @@ async function sendMail(options = {}) {
   });
 
   console.log("[mailer] sendMail transport:", {
-    activeTransport: "gmail-smtp",
-    provider: "gmail",
+    activeTransport: "smtp",
+    provider: SMTP_HOST,
     accepted: info.accepted
   });
 
@@ -94,8 +99,8 @@ async function verify() {
 module.exports = {
   sendMail,
   verify,
-  __transportLabel: "gmail-smtp",
-  __provider: "gmail",
-  __endpoint: "smtp.gmail.com",
-  __senderEmail: EMAIL_USER
+  __transportLabel: "smtp",
+  __provider: SMTP_HOST,
+  __endpoint: SMTP_HOST,
+  __senderEmail: SMTP_USER
 };
