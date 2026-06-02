@@ -11,10 +11,7 @@ function toAddressString(to) {
         if (!entry) return "";
         if (typeof entry === "string") return entry.trim();
         if (typeof entry === "object" && entry.email) {
-          const email = String(entry.email).trim();
-          if (!email) return "";
-          if (entry.name) return `"${String(entry.name).replace(/"/g, '\\"')}" <${email}>`;
-          return email;
+          return String(entry.email).trim();
         }
         return "";
       })
@@ -24,13 +21,12 @@ function toAddressString(to) {
 
   if (typeof to === "string") return to.trim();
   if (typeof to === "object" && to?.email) {
-    const email = String(to.email).trim();
-    if (!email) return "";
-    if (to.name) return `"${String(to.name).replace(/"/g, '\\"')}" <${email}>`;
-    return email;
+    return String(to.email).trim();
   }
   return "";
 }
+
+let transporter = null;
 
 function getTransporter() {
   if (!EMAIL_USER || !EMAIL_PASS) {
@@ -39,13 +35,17 @@ function getTransporter() {
     throw configError;
   }
 
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: EMAIL_USER,
-      pass: EMAIL_PASS
-    }
-  });
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS
+      }
+    });
+  }
+
+  return transporter;
 }
 
 async function sendMail(options = {}) {
@@ -68,9 +68,7 @@ async function sendMail(options = {}) {
     throw invalidBodyError;
   }
 
-  const transporter = getTransporter();
-
-  const info = await transporter.sendMail({
+  const info = await getTransporter().sendMail({
     from: `"${EMAIL_FROM_NAME}" <${EMAIL_USER}>`,
     to,
     subject: options.subject,
@@ -91,8 +89,7 @@ async function sendMail(options = {}) {
 }
 
 async function verify() {
-  const transporter = getTransporter();
-  return transporter.verify();
+  return getTransporter().verify();
 }
 
 module.exports = {

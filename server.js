@@ -739,8 +739,8 @@ app.post("/api/auth/send-otp", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
@@ -755,7 +755,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      to: sanitizedEmail,
+      to: normalizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
@@ -798,8 +798,8 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
@@ -880,8 +880,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(404).json({
@@ -946,8 +946,8 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
@@ -962,7 +962,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
-      to: sanitizedEmail,
+      to: normalizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
