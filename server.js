@@ -943,8 +943,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if (!emailPattern.test(email)) {
+    if (!EMAIL_PATTERN.test(email)) {
       return res.json({ success: false, message: "Invalid email" });
     }
 
