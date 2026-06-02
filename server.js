@@ -684,7 +684,7 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
 app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
   try {
     const phone = typeof req.body.phone === "string" ? req.body.phone.trim() : "";
-    const otp = typeof req.body.otp === "string" ? req.body.otp.trim() : String(req.body.otp || "");
+    const otp = typeof req.body.otp === "string" ? req.body.otp.trim() : "";
 
     const user = await User.findById(req.user.id);
 
@@ -700,7 +700,11 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
       return res.json({ success: false, message: "Invalid phone number" });
     }
 
-    if (!user.phoneOtpTarget || user.phoneOtpTarget !== phone) {
+    if (!user.phoneOtpTarget) {
+      return res.json({ success: false, message: "OTP not requested for this phone number" });
+    }
+
+    if (user.phoneOtpTarget !== phone) {
       return res.json({ success: false, message: "Phone number mismatch for OTP" });
     }
 

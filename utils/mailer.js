@@ -26,23 +26,22 @@ function toAddressString(to) {
   return "";
 }
 
-let transporter = null;
+let transporter =
+  EMAIL_USER && EMAIL_PASS
+    ? nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: EMAIL_USER,
+          pass: EMAIL_PASS
+        }
+      })
+    : null;
 
 function getTransporter() {
   if (!EMAIL_USER || !EMAIL_PASS) {
     const configError = new Error("Gmail mailer is not configured");
     configError.code = "MAILER_CONFIG";
     throw configError;
-  }
-
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS
-      }
-    });
   }
 
   return transporter;
