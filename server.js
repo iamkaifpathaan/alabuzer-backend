@@ -27,6 +27,12 @@ const rateLimit = require("express-rate-limit");
 const EMAIL_CHANGE_RESEND_LIMIT = 5;
 const EMAIL_CHANGE_COOLDOWN_MS = 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
+const OTP_EXPIRY_MS_PHONE = 5 * 60 * 1000;
+const OTP_EXPIRY_MS_EMAIL = 10 * 60 * 1000;
+
+function generateOtp() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
@@ -47,29 +53,28 @@ app.use(helmet());
 app.use(express.json());
 
 // ================= MAILER STARTUP CHECK =================
-// Log Brevo configuration and verify connectivity once at startup.
+// Log Gmail configuration and verify connectivity once at startup.
 (async () => {
   try {
-    const hasBrevoConfig =
-      Boolean(process.env.BREVO_API_KEY) && Boolean(process.env.BREVO_SENDER_EMAIL);
+    const hasGmailConfig = Boolean(process.env.EMAIL_USER) && Boolean(process.env.EMAIL_PASS);
 
     console.log("[mailer] active transport:", transporter.__transportLabel);
     console.log("[mailer] provider:", transporter.__provider);
     console.log("[mailer] endpoint:", transporter.__endpoint);
 
-    if (!hasBrevoConfig) {
-      console.warn("[mailer] Brevo mailer is not configured; OTP emails will fail.");
+    if (!hasGmailConfig) {
+      console.warn("[mailer] Gmail mailer is not configured; OTP emails will fail.");
       return;
     }
 
-    console.log("[mailer] verifying Brevo transport...");
+    console.log("[mailer] verifying Gmail transport...");
     await transporter.verify();
-    console.log("[mailer] Brevo connected:", {
+    console.log("[mailer] Gmail connected:", {
       endpoint: transporter.__endpoint,
       sender: transporter.__senderEmail
     });
   } catch (err) {
-    console.error("[mailer] Brevo failed:", {
+    console.error("[mailer] Gmail failed:", {
       endpoint: transporter.__endpoint,
       message: err?.message,
       code: err?.code,
@@ -440,11 +445,11 @@ app.post("/api/user/initiate-email-change", verifyToken, async (req, res) => {
       });
     }
 
-    const otp = crypto.randomInt(100000, 1000000).toString();
+    const otp = generateOtp();
 
     user.pendingEmail = newEmail;
     user.pendingEmailOtp = otp;
-    user.pendingEmailOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
+    user.pendingEmailOtpExpire = new Date(Date.now() + OTP_EXPIRY_MS_EMAIL);
     user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
     user.pendingEmailOtpLastSent = new Date();
 
@@ -595,10 +600,10 @@ app.post("/api/user/resend-email-change-otp", verifyToken, async (req, res) => {
       });
     }
 
-    const otp = crypto.randomInt(100000, 1000000).toString();
+    const otp = generateOtp();
 
     user.pendingEmailOtp = otp;
-    user.pendingEmailOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
+    user.pendingEmailOtpExpire = new Date(Date.now() + OTP_EXPIRY_MS_EMAIL);
     user.pendingEmailOtpResendCount = (user.pendingEmailOtpResendCount || 0) + 1;
     user.pendingEmailOtpLastSent = new Date();
 
@@ -633,7 +638,7 @@ app.post("/api/user/resend-email-change-otp", verifyToken, async (req, res) => {
 
 app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
   try {
-    const { phone } = req.body;
+    const phone = typeof req.body.phone === "string" ? req.body.phone.trim() : "";
 
     const user = await User.findById(req.user.id);
 
@@ -648,10 +653,11 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
       return res.json({ success: false, message: "Invalid phone" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = generateOtp();
 
     user.otp = otp;
-    user.otpExpire = Date.now() + 5 * 60 * 1000;
+    user.otpExpire = Date.now() + OTP_EXPIRY_MS_PHONE;
+    user.phoneOtpTarget = phone;
 
     await user.save();
 
@@ -677,7 +683,8 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
 
 app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
   try {
-    const { phone, otp } = req.body;
+    const phone = typeof req.body.phone === "string" ? req.body.phone.trim() : "";
+    const otp = typeof req.body.otp === "string" ? req.body.otp.trim() : "";
 
     const user = await User.findById(req.user.id);
 
@@ -693,10 +700,19 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
       return res.json({ success: false, message: "Invalid phone number" });
     }
 
+    if (!user.phoneOtpTarget) {
+      return res.json({ success: false, message: "OTP not requested for this phone number" });
+    }
+
+    if (user.phoneOtpTarget !== phone) {
+      return res.json({ success: false, message: "Phone number mismatch for OTP" });
+    }
+
     user.phone = phone;
     user.phoneVerified = true;
     user.otp = null;
     user.otpExpire = null;
+    user.phoneOtpTarget = null;
 
     await user.save();
 
@@ -722,28 +738,27 @@ app.post("/api/auth/send-otp", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if (!emailPattern.test(email)) {
+    if (!EMAIL_PATTERN.test(email)) {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = generateOtp();
 
     user.resetOtp = otp;
-    user.resetOtpExpire = Date.now() + 10 * 60 * 1000;
+    user.resetOtpExpire = Date.now() + OTP_EXPIRY_MS_EMAIL;
     user.resetOtpVerified = false;
 
     await user.save();
 
     await transporter.sendMail({
-      to: sanitizedEmail,
+      to: normalizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
@@ -781,13 +796,12 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const emailPattern = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{1,63}$/;
-    if (!emailPattern.test(email)) {
+    if (!EMAIL_PATTERN.test(email)) {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
@@ -803,7 +817,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 
     user.resetOtpVerified = true;
     user.resetOtp = null;
-    user.resetOtpExpire = new Date(Date.now() + 10 * 60 * 1000);
+    user.resetOtpExpire = new Date(Date.now() + OTP_EXPIRY_MS_EMAIL);
     await user.save();
 
     res.json({ success: true, message: "OTP verified" });
@@ -868,8 +882,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       });
     }
 
-    const sanitizedEmail = email.toLowerCase();
-    const user = await User.findOne({ email: sanitizedEmail });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(404).json({
@@ -919,33 +933,37 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
 
     if (!email) {
       return res.json({ success: false, message: "Email required" });
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(email)) {
+    if (email.length > 254) {
       return res.json({ success: false, message: "Invalid email" });
     }
 
-    const user = await User.findOne({ email });
+    if (!EMAIL_PATTERN.test(email)) {
+      return res.json({ success: false, message: "Invalid email" });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.json({ success: false, message: "User not found" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = generateOtp();
 
     user.resetOtp = otp;
-    user.resetOtpExpire = Date.now() + 10 * 60 * 1000;
+    user.resetOtpExpire = Date.now() + OTP_EXPIRY_MS_EMAIL;
     user.resetOtpVerified = false;
 
     await user.save();
 
     await transporter.sendMail({
-      to: email,
+      to: normalizedEmail,
       subject: "AL ABUZER - Password Reset OTP",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
@@ -982,10 +1000,10 @@ app.post("/api/auth/send-email-otp", verifyToken, async (req, res) => {
       return res.json({ success: true, message: "Email already verified" });
     }
 
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = generateOtp();
 
     user.emailOtp = otp;
-    user.emailOtpExpire = Date.now() + 10 * 60 * 1000;
+    user.emailOtpExpire = Date.now() + OTP_EXPIRY_MS_EMAIL;
 
     await user.save();
 

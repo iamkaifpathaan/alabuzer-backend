@@ -57,6 +57,7 @@ const userSchema = new mongoose.Schema({
 
   otp: String,
   otpExpire: Date,
+  phoneOtpTarget: String,
 
   role: {
     type: String,
