@@ -197,7 +197,7 @@ router.put("/status/:id", verifyToken, verifyAdmin, async (req, res) => {
 
     const allowed = [
       "placed",
-      "confirmed",
+      "packed",
       "shipped",
       "delivered",
       "cancelled"
