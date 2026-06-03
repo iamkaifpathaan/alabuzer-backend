@@ -816,6 +816,11 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     }
 
     user.resetOtpVerified = true;
+
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+    }   
+    
     user.resetOtp = null;
     user.resetOtpExpire = new Date(Date.now() + OTP_EXPIRY_MS_EMAIL);
     await user.save();
