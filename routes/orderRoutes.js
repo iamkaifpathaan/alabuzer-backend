@@ -222,8 +222,8 @@ if (!order) {
 
 // 🔒 FLOW CONTROL
 const flow = {
-  placed: ["confirmed","cancelled"],
-  confirmed: ["shipped","cancelled"],
+  placed: ["packed","cancelled"],
+  packed: ["shipped","cancelled"],
   shipped: ["delivered"],
   delivered: [],
   cancelled: []
