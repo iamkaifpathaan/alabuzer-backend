@@ -15,7 +15,8 @@ router.post("/", verifyToken, async (req, res) => {
     const {
   items,
   shippingAddress,
-  paymentMethod
+  paymentMethod,
+  emailNotifications
 } = req.body;
 
 const userId = req.user.id;   // 🔐 TAKE FROM TOKEN
@@ -77,7 +78,8 @@ const order = new Order({
   userId,
   items: enrichedItems,
   shippingAddress,
-  paymentMethod
+  paymentMethod,
+  emailNotifications: !!emailNotifications
 });
 
     await order.save();
@@ -254,38 +256,70 @@ await order.save();
    📧 ORDER STATUS EMAIL
 ========================= */
 
-try{
+try {
 
-const user = await User.findById(order.userId);
+  const user = await User.findById(order.userId);
 
-if(false){
+  const emailStatuses = [
+    "packed",
+    "shipped",
+    "delivered",
+    "cancelled"
+  ];
 
-await transporter.sendMail({
+  const shouldSendEmail =
+    user &&
+    user.email &&
+    user.emailVerified === true &&
+    order.emailNotifications === true &&
+    emailStatuses.includes(status);
 
-from:process.env.EMAIL_USER,
-to:user.email,
-subject:`Order Update - ${status}`,
+  if (shouldSendEmail) {
 
-html:`
+    console.log("[ORDER EMAIL] Sending:", {
+      email: user.email,
+      status
+    });
 
-<h2>Order Status Updated</h2>
+    await transporter.sendMail({
+      to: user.email,
+      subject: `AL ABUZER PERFUMES - Order ${status.toUpperCase()}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;padding:20px;">
+          
+          <h2>AL ABUZER PERFUMES</h2>
 
-<p>Your order status is now:</p>
+          <p>Hello ${user.name || "Customer"},</p>
 
-<h3>${status.toUpperCase()}</h3>
+          <p>Your order status has been updated.</p>
 
-<p>Order ID: ${order._id}</p>
+          <h3>${status.toUpperCase()}</h3>
 
-<p>Thank you for shopping with AL-ABUZER PERFUMES.</p>
+          <p><strong>Order ID:</strong> ${order._id}</p>
 
-`
+          <p>Thank you for shopping with us.</p>
 
-});
+        </div>
+      `
+    });
 
-}
+    console.log("[ORDER EMAIL] Sent successfully");
 
-}catch(e){
-console.log("EMAIL ERROR:",e);
+  } else {
+
+    console.log("[ORDER EMAIL] Skipped", {
+      email: user?.email,
+      emailVerified: user?.emailVerified,
+      emailNotifications: order?.emailNotifications,
+      status
+    });
+
+  }
+
+} catch (e) {
+
+  console.error("[ORDER EMAIL ERROR]", e);
+
 }
 
     res.json({

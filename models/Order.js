@@ -31,6 +31,11 @@ const orderSchema = new mongoose.Schema({
     default: "COD"
   },
 
+  emailNotifications: {
+    type: Boolean,
+    default: false
+  },
+
   orderStatus: {
     type: String,
     enum: [
