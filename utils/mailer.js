@@ -1,106 +1,56 @@
-const nodemailer = require("nodemailer");
+const axios = require("axios");
 
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_SECURE = process.env.SMTP_SECURE === "true";
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const EMAIL_FROM_NAME = process.env.EMAIL_FROM_NAME || "AL ABUZER PERFUMES";
-
-function toAddressString(to) {
-  if (Array.isArray(to)) {
-    const recipients = to
-      .map((entry) => {
-        if (!entry) return "";
-        if (typeof entry === "string") return entry.trim();
-        if (typeof entry === "object" && entry.email) {
-          return String(entry.email).trim();
-        }
-        return "";
-      })
-      .filter(Boolean);
-    return recipients.join(",");
-  }
-
-  if (typeof to === "string") return to.trim();
-  if (typeof to === "object" && to?.email) {
-    return String(to.email).trim();
-  }
-  return "";
-}
-
-let transporter =
-  SMTP_HOST && SMTP_USER && SMTP_PASS
-    ? nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: SMTP_PORT,
-        secure: SMTP_SECURE,
-        auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS
-        }
-      })
-    : null;
-
-function getTransporter() {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    const configError = new Error("Gmail mailer is not configured");
-    configError.code = "MAILER_CONFIG";
-    throw configError;
-  }
-
-  return transporter;
-}
+const EMAIL_FROM = process.env.EMAIL_USER;
 
 async function sendMail(options = {}) {
-  const to = toAddressString(options.to);
-  if (!to) {
-    const invalidRecipientError = new Error("Valid recipient email is required");
-    invalidRecipientError.code = "MAILER_INVALID_RECIPIENT";
-    throw invalidRecipientError;
+  if (!BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY not configured");
   }
 
-  if (!options.subject) {
-    const invalidSubjectError = new Error("Email subject is required");
-    invalidSubjectError.code = "MAILER_INVALID_SUBJECT";
-    throw invalidSubjectError;
-  }
+  const response = await axios.post(
+    "https://api.brevo.com/v3/smtp/email",
+    {
+      sender: {
+        name: EMAIL_FROM_NAME,
+        email: EMAIL_FROM
+      },
+      to: [
+        {
+          email: options.to
+        }
+      ],
+      subject: options.subject,
+      htmlContent: options.html || "",
+      textContent: options.text || ""
+    },
+    {
+      headers: {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json"
+      }
+    }
+  );
 
-  if (!options.html && !options.text) {
-    const invalidBodyError = new Error("Either html or text body is required");
-    invalidBodyError.code = "MAILER_INVALID_BODY";
-    throw invalidBodyError;
-  }
+  console.log("[mailer] Brevo email sent:", response.data);
 
-  const info = await getTransporter().sendMail({
-    from: `"${EMAIL_FROM_NAME}" <${SMTP_USER}>`,
-    to,
-    subject: options.subject,
-    html: options.html,
-    text: options.text
-  });
-
-  console.log("[mailer] sendMail transport:", {
-    activeTransport: "smtp",
-    provider: SMTP_HOST,
-    accepted: info.accepted
-  });
-
-  return {
-    messageId: info.messageId,
-    provider: "gmail"
-  };
+  return response.data;
 }
 
 async function verify() {
-  return getTransporter().verify();
+  if (!BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY missing");
+  }
+
+  return true;
 }
 
 module.exports = {
   sendMail,
   verify,
-  __transportLabel: "smtp",
-  __provider: SMTP_HOST,
-  __endpoint: SMTP_HOST,
-  __senderEmail: SMTP_USER
+  __transportLabel: "brevo-api",
+  __provider: "brevo",
+  __endpoint: "https://api.brevo.com",
+  __senderEmail: EMAIL_FROM
 };
