@@ -724,7 +724,7 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
     }
 
 user.phone = phone;
-
+user.phoneVerified = true;
 user.phoneOtpResendCount = 0;
 user.phoneOtpLastSent = null;
     user.otp = null;
