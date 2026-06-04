@@ -1005,15 +1005,25 @@ app.post("/api/auth/send-email-otp", verifyToken, async (req, res) => {
       return res.json({ success: true, message: "Email already verified" });
     }
 
-    const otp = generateOtp();
+const email = String(req.body.email || "").trim().toLowerCase();
 
-    user.emailOtp = otp;
-    user.emailOtpExpire = Date.now() + OTP_EXPIRY_MS_EMAIL;
+if (!email) {
+  return res.json({
+    success: false,
+    message: "Email is required"
+  });
+}
 
-    await user.save();
+const otp = generateOtp();
 
-    await transporter.sendMail({
-      to: user.email,
+user.pendingEmail = email;
+user.emailOtp = otp;
+user.emailOtpExpire = Date.now() + OTP_EXPIRY_MS_EMAIL;
+
+await user.save();
+
+await transporter.sendMail({
+  to: email,
       subject: "AL ABUZER - Verify Your Email",
       html: `
         <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#1a1a2e;color:#fff;border-radius:12px;">
@@ -1042,6 +1052,10 @@ app.post("/api/auth/verify-email-otp", verifyToken, async (req, res) => {
   try {
     const { otp } = req.body;
 
+const email = String(req.body.email || "")
+  .trim()
+  .toLowerCase();
+
     if (!otp) {
       return res.json({ success: false, message: "OTP required" });
     }
@@ -1064,7 +1078,22 @@ app.post("/api/auth/verify-email-otp", verifyToken, async (req, res) => {
       return res.json({ success: false, message: "OTP expired" });
     }
 
-    user.emailVerified = true;
+    if (
+  !user.pendingEmail ||
+  user.pendingEmail !== email
+) {
+  return res.json({
+    success: false,
+    message: "Email mismatch"
+  });
+}
+
+user.email = user.pendingEmail;
+user.emailVerified = true;
+
+user.pendingEmail = null;
+user.pendingEmailOtp = null;
+user.pendingEmailOtpExpire = null;
     user.emailOtp = null;
     user.emailOtpExpire = null;
 
