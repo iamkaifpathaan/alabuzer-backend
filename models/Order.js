@@ -31,6 +31,11 @@ const orderSchema = new mongoose.Schema({
     default: "COD"
   },
 
+  notificationEmail: {
+    type: String,
+    default: null
+  },
+
   emailNotifications: {
     type: Boolean,
     default: false

@@ -282,7 +282,7 @@ try {
     });
 
     await transporter.sendMail({
-      to: user.email,
+      to: order.notificationEmail || user.email,
       subject: `AL ABUZER PERFUMES - Order ${status.toUpperCase()}`,
       html: `
         <div style="font-family:Arial,sans-serif;padding:20px;">

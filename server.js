@@ -1169,13 +1169,16 @@ app.post("/api/payment/create-order", verifyToken, async (req, res) => {
 
 app.post("/api/payment/verify", verifyToken, async (req, res) => {
   try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      items,
-      shippingAddress
-    } = req.body;
+const {
+  razorpay_order_id,
+  razorpay_payment_id,
+  razorpay_signature,
+  items,
+  shippingAddress,
+  emailNotifications,
+  notificationEmail,
+  emailVerified
+} = req.body;
 
     const userId = req.user.id;
 
@@ -1233,12 +1236,15 @@ app.post("/api/payment/verify", verifyToken, async (req, res) => {
       });
     }
 
-    const order = new Order({
-      userId,
-      items: enrichedItems,
-      shippingAddress,
-      paymentMethod: "Razorpay"
-    });
+const order = new Order({
+  userId,
+  items: enrichedItems,
+  shippingAddress,
+  paymentMethod: "Razorpay",
+
+  emailNotifications: !!emailNotifications,
+  notificationEmail: notificationEmail || null
+});
 
     await order.save();
 
