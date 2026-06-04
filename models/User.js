@@ -31,6 +31,13 @@ const userSchema = new mongoose.Schema({
 
   password: String,
 
+  phoneOtpResendCount: {
+  type: Number,
+  default: 0
+  },
+
+  phoneOtpLastSent: Date,
+
   emailVerified: {
     type: Boolean,
     default: false

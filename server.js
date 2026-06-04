@@ -640,14 +640,24 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
   try {
     const phone = typeof req.body.phone === "string" ? req.body.phone.trim() : "";
 
-    const user = await User.findById(req.user.id);
+const user = await User.findById(req.user.id);
 
-    if (user.phoneVerified) {
-      return res.json({
-        success: true,
-        message: "Already verified"
-      });
-    }
+const now = Date.now();
+
+// Reset after 10 minutes
+if (
+  user.phoneOtpLastSent &&
+  now - user.phoneOtpLastSent > 10 * 60 * 1000
+) {
+  user.phoneOtpResendCount = 0;
+}
+
+if (user.phoneOtpResendCount >= 10) {
+  return res.json({
+    success: false,
+    message: "Too many OTP requests. Please try again after 10 minutes."
+  });
+}
 
     if (!/^[6-9]\d{9}$/.test(phone)) {
       return res.json({ success: false, message: "Invalid phone" });
@@ -659,17 +669,22 @@ app.post("/api/auth/send-phone-otp", verifyToken, async (req, res) => {
     user.otpExpire = Date.now() + OTP_EXPIRY_MS_PHONE;
     user.phoneOtpTarget = phone;
 
-    await user.save();
+
 
     await axios.get("https://www.fast2sms.com/dev/bulkV2", {
       params: {
         authorization: process.env.FAST2SMS_KEY,
         route: "q",
-        message: `Your OTP is ${otp}`,
+        message: `Your OTP is ${otp},Please verify this for order placement:-AL-ABUZER PERFUMES`,
         language: "english",
         numbers: phone
       }
     });
+
+    user.phoneOtpResendCount += 1;
+user.phoneOtpLastSent = now;
+
+await user.save();
 
     res.json({ success: true });
   } catch (err) {
@@ -708,8 +723,11 @@ app.post("/api/auth/verify-phone-otp", verifyToken, async (req, res) => {
       return res.json({ success: false, message: "Phone number mismatch for OTP" });
     }
 
-    user.phone = phone;
-    user.phoneVerified = true;
+user.phone = phone;
+user.phoneVerified = true;
+
+user.phoneOtpResendCount = 0;
+user.phoneOtpLastSent = null;
     user.otp = null;
     user.otpExpire = null;
     user.phoneOtpTarget = null;
